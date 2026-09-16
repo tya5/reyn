@@ -281,4 +281,8 @@ HOOKS_ADD = ToolDefinition(
     category="hooks",
     purity="side_effect",
     doc_ref=_HOOKS_ADD_DOC_REF,
+    # #6184 段3-4: name (human label, when given) first, then `on` (the
+    # required event this hook attaches to) -- same priority-order shape as
+    # exec's own (cmd, argv).
+    subject_params=("name", "on"),
 )

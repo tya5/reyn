@@ -331,4 +331,6 @@ SEARCH_KNOWLEDGE = ToolDefinition(
     # (_NOT_EXTERNAL, activation). See tests/test_returns_external_content_
     # flagset_1822.py.
     returns_external_content=True,
+    # #6184 段3-4: query is identifying from its own first characters.
+    subject_params=("query",),
 )

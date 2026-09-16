@@ -96,4 +96,6 @@ WEB_SEARCH = ToolDefinition(
     category="discovery",
     purity="read_only",   # web search has no side effect on workspace
     returns_external_content=True,  # FP-0050/#1822: internet content
+    # #6184 段3-4: query is identifying from its own first characters.
+    subject_params=("query",),
 )

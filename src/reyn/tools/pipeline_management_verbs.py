@@ -236,6 +236,9 @@ PIPELINE_INSTALL_LOCAL = ToolDefinition(
     category="io",
     purity="side_effect",
     doc_ref=_PIPELINE_DOC_REF,
+    # #6184 段3-4: name (optional override, when given) first, then the
+    # required path -- same priority-order shape as exec's own (cmd, argv).
+    subject_params=("name", "path"),
 )
 
 PIPELINE_INSTALL_SOURCE = ToolDefinition(
@@ -255,6 +258,10 @@ PIPELINE_INSTALL_SOURCE = ToolDefinition(
     category="io",
     purity="side_effect",
     doc_ref=_PIPELINE_DOC_REF,
+    # #6184 段3-4: name (optional override, when given) first, then the
+    # required source -- same priority-order shape as exec's own (cmd,
+    # argv).
+    subject_params=("name", "source"),
 )
 
 __all__ = ["PIPELINE_INSTALL_LOCAL", "PIPELINE_INSTALL_SOURCE"]

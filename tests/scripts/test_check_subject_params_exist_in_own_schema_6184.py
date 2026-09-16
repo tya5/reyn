@@ -54,33 +54,38 @@ def test_the_real_registrys_diff_is_currently_empty() -> None:
     )
 
 
-def test_every_tool_in_the_real_registry_defaults_to_empty_subject_params() -> None:
-    """Tier 2: non-vacuity for① — pins the field is genuinely additive
-    (every tool but ``exec`` has the default ``()``), not merely that
-    the gate's own diff happens to be empty for some other reason (e.g.
-    every tool's ``parameters`` being unreadable).
+def test_the_real_registry_has_both_a_declared_and_an_undeclared_tool() -> None:
+    """Tier 2: non-vacuity for① — pins the gate's zero-diff is not merely
+    because every tool's ``parameters`` is unreadable (e.g. every
+    ``properties`` dict empty, which would make ``find_stale_subject_
+    params`` never iterate a single offender-check): both a tool WITH a
+    real declaration and a tool WITHOUT one must exist.
 
     #6184 CI fix (lead-coder, measured — #6200's own CI, own review
-    admission: "空虚かは見たが、次の段がこれを壊すかを問わなかった"):
-    this test's own original claim ("every tool" with no exception) was
-    correct at 段3-1's own merge but 段3-2 (a LATER stage, same arc)
-    intentionally makes it false for ``exec`` — the SAME "merge-time
-    observation, not a standing invariant" shape #6190/#6191's own
-    tests already disclosed for their own claims, which this one did
-    not. ``exec`` is now excluded by NAME rather than the claim being
-    weakened to "at least one" — kept this precise so a SECOND tool
-    gaining a declaration without a matching update here still fails.
-    See ``tests/runtime/test_6184_stage3_2_producer_fills_subject.py``'s
-    own ``test_every_currently_registered_tool_except_exec_has_no_
-    subject_params`` for that stage's own, differently-scoped version
-    of this same underlying fact (kept as two tests, not merged: this
-    one is about the GATE's own non-vacuity, that one is about 段3-2's
-    own accept criteria — different questions that currently share an
-    answer)."""
+    admission: "空虚かは見たが、次の段がこれを壊すかを問わなかった"): the
+    ORIGINAL version of this test pinned "every tool but exec defaults
+    to empty" — correct at 段3-1's own merge, made false by 段3-2 (exec's
+    own first declaration), and then AGAIN by 段3-4 (a LATER stage, same
+    arc, intentionally declaring ``subject_params`` on every other tool
+    whose own param passes the "identifying from the first character"
+    discriminator, issuecomment-5690351417) — the SAME "merge-time
+    observation, not a standing invariant" shape #6190/#6191's own tests
+    already disclosed. Re-scoped (not re-pinned to a new exact set) so a
+    LATER stage adding or removing one more declaration does not need to
+    touch this file a third time — the per-tool detail belongs to
+    ``tests/tools/test_6184_stage3_4_other_tools_subject_params.py``
+    (its own deny-side witness, ``list_tasks``) and ``test_6184_stage3_2_
+    producer_fills_subject.py`` (exec's own), not here."""
     registry = get_default_registry()
     tools = list(registry)
     assert tools, "setup: the real registry must not be empty"
-    assert all(t.subject_params == () for t in tools if t.name != "exec")
+    declared = [t for t in tools if t.subject_params]
+    undeclared = [t for t in tools if not t.subject_params]
+    assert declared, "setup: expected >=1 tool with a real subject_params declaration"
+    assert undeclared, (
+        "setup: expected >=1 tool with NO declaration — a genuine deny "
+        "population, not 'declare on every tool'"
+    )
 
 
 # ── acceptance② — a stale subject_params name is flagged, a valid one is not ──

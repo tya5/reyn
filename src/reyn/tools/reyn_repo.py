@@ -242,6 +242,8 @@ REYN_REPO_LIST = ToolDefinition(
     handler=_handle_list,
     purity="read_only",
     category="dev",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 REYN_REPO_READ = ToolDefinition(
@@ -254,6 +256,8 @@ REYN_REPO_READ = ToolDefinition(
     handler=_handle_read,
     purity="read_only",
     category="dev",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 REYN_REPO_GLOB = ToolDefinition(
@@ -272,6 +276,8 @@ REYN_REPO_GLOB = ToolDefinition(
     handler=_handle_glob,
     purity="read_only",
     category="dev",
+    # #6184 段3-4: pattern is identifying from its own first characters.
+    subject_params=("pattern",),
 )
 
 REYN_REPO_GREP = ToolDefinition(
@@ -290,4 +296,6 @@ REYN_REPO_GREP = ToolDefinition(
     handler=_handle_grep,
     purity="read_only",
     category="dev",
+    # #6184 段3-4: pattern is identifying from its own first characters.
+    subject_params=("pattern",),
 )

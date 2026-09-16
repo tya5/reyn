@@ -245,6 +245,10 @@ PLUGIN_INSTALL = ToolDefinition(
     category="io",
     purity="side_effect",
     doc_ref=_PLUGIN_DOC_REF,
+    # #6184 段3-4: name (optional override, when given) first, then the
+    # required source -- same priority-order shape as exec's own (cmd,
+    # argv).
+    subject_params=("name", "source"),
 )
 
 PLUGIN_UNINSTALL = ToolDefinition(
@@ -266,6 +270,8 @@ PLUGIN_UNINSTALL = ToolDefinition(
     category="io",
     purity="side_effect",
     doc_ref=_PLUGIN_DOC_REF,
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )
 
 PLUGIN_LIST = ToolDefinition(

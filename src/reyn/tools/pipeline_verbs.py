@@ -799,6 +799,10 @@ RUN_PIPELINE = ToolDefinition(
     handler=_handle_run_pipeline,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: name (when given) is identifying from its own first
+    # characters; a run driven by an inline `definition` instead has no
+    # declared subject (correctly None).
+    subject_params=("name",),
 )
 
 

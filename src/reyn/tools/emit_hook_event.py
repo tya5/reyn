@@ -98,4 +98,7 @@ EMIT_HOOK_EVENT = ToolDefinition(
     handler=_handle_emit_hook_event,
     category="hooks",
     purity="side_effect",
+    # #6184 段3-4: event_name is identifying from its own first characters
+    # (payload is bulk, not identity).
+    subject_params=("event_name",),
 )

@@ -142,6 +142,8 @@ PRESENTATION_INSTALL = ToolDefinition(
     # proposal 0060 D5d: mirrors the "presentation" PartTypeSpec's doc_ref
     # (reyn.core.part_types.presentation) — same part-type, install-verb axis.
     doc_ref="docs/concepts/runtime/present.md",
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )
 
 __all__ = ["PRESENTATION_INSTALL"]

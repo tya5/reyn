@@ -134,4 +134,6 @@ WEB_FETCH = ToolDefinition(
     category="discovery",
     purity="read_only",   # web fetch reads a URL, no workspace side effect
     returns_external_content=True,  # FP-0050/#1822: internet content
+    # #6184 段3-4: url is identifying from its own first characters.
+    subject_params=("url",),
 )

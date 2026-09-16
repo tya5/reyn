@@ -76,6 +76,9 @@ LIST_AGENTS = ToolDefinition(
     handler=_handle_list_agents,
     purity="read_only",
     category="discovery",
+    # #6184 段3-4: path is identifying from its own first characters (which
+    # scope's agents).
+    subject_params=("path",),
 )
 
 
@@ -130,4 +133,7 @@ DESCRIBE_AGENT = ToolDefinition(
     handler=_handle_describe_agent,
     purity="read_only",
     category="discovery",
+    # #6184 段3-4: name is identifying from its own first characters (which
+    # agent).
+    subject_params=("name",),
 )

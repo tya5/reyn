@@ -341,6 +341,9 @@ SKILL_INSTALL_LOCAL = ToolDefinition(
     category="io",
     purity="side_effect",
     doc_ref=_SKILL_DOC_REF,
+    # #6184 段3-4: name (optional override, when given) first, then the
+    # required path -- same priority-order shape as exec's own (cmd, argv).
+    subject_params=("name", "path"),
 )
 
 SKILL_INSTALL_SOURCE = ToolDefinition(
@@ -360,6 +363,10 @@ SKILL_INSTALL_SOURCE = ToolDefinition(
     category="io",
     purity="side_effect",
     doc_ref=_SKILL_DOC_REF,
+    # #6184 段3-4: name (optional override, when given) first, then the
+    # required source -- same priority-order shape as exec's own (cmd,
+    # argv).
+    subject_params=("name", "source"),
 )
 
 SKILL_LIST = ToolDefinition(
@@ -406,6 +413,8 @@ LOAD_SKILL = ToolDefinition(
     # vs activation.
     returns_external_content=False,
     doc_ref=_SKILL_DOC_REF,
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 __all__ = ["SKILL_INSTALL_LOCAL", "SKILL_INSTALL_SOURCE", "SKILL_LIST", "LOAD_SKILL"]

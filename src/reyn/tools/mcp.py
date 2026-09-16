@@ -732,6 +732,8 @@ LIST_MCP_TOOLS = ToolDefinition(
     category="discovery",
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external server-authored tool descriptions
+    # #6184 段3-4: server is identifying from its own first characters.
+    subject_params=("server",),
 )
 
 CALL_MCP_TOOL = ToolDefinition(
@@ -746,6 +748,9 @@ CALL_MCP_TOOL = ToolDefinition(
     purity="side_effect",  # call_mcp_tool has arbitrary side effects
     returns_external_content=True,  # FP-0050/#1822: external MCP server result
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: mcp_tool_name is identifying from its own first
+    # characters.
+    subject_params=("mcp_tool_name",),
 )
 
 DESCRIBE_MCP_TOOL = ToolDefinition(
@@ -760,6 +765,9 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external server-authored schema/description
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: mcp_tool_name is identifying from its own first
+    # characters.
+    subject_params=("mcp_tool_name",),
 )
 
 
@@ -780,6 +788,8 @@ LIST_MCP_RESOURCES = ToolDefinition(
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external server-authored resource listing
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: server is identifying from its own first characters.
+    subject_params=("server",),
 )
 
 LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
@@ -794,6 +804,8 @@ LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external server-authored template listing
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: server is identifying from its own first characters.
+    subject_params=("server",),
 )
 
 READ_MCP_RESOURCE = ToolDefinition(
@@ -808,6 +820,8 @@ READ_MCP_RESOURCE = ToolDefinition(
     purity="read_only",  # a resource read has no reyn-side side effects (unlike call_mcp_tool)
     returns_external_content=True,  # FP-0050/#1822: external MCP server resource content
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: uri is identifying from its own first characters.
+    subject_params=("uri",),
 )
 
 
@@ -826,6 +840,8 @@ SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
     category="discovery",
     purity="side_effect",  # registers server-side subscription state
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: uri is identifying from its own first characters.
+    subject_params=("uri",),
 )
 
 UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
@@ -839,6 +855,8 @@ UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
     category="discovery",
     purity="side_effect",
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: uri is identifying from its own first characters.
+    subject_params=("uri",),
 )
 
 
@@ -859,6 +877,8 @@ LIST_MCP_PROMPTS = ToolDefinition(
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external server-authored prompt listing
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: server is identifying from its own first characters.
+    subject_params=("server",),
 )
 
 GET_MCP_PROMPT = ToolDefinition(
@@ -873,6 +893,9 @@ GET_MCP_PROMPT = ToolDefinition(
     purity="read_only",  # a prompt fetch has no reyn-side side effects (unlike call_mcp_tool)
     returns_external_content=True,  # FP-0050/#1822: external MCP server prompt content
     schema_enricher=_enrich_router_schema,
+    # #6184 段3-4: name (the prompt's own name) is identifying from its own
+    # first characters.
+    subject_params=("name",),
 )
 
 

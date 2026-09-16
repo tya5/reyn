@@ -124,4 +124,6 @@ TOPOLOGY_CREATE = ToolDefinition(
     category="delegation",
     purity="side_effect",
     dispatch_kind="sync",  # creates the topology + emits topology_created; returns an ack
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )

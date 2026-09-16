@@ -621,6 +621,8 @@ LIST_MEMORY = ToolDefinition(
     category="memory",
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: user/agent-written .md descriptions
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 READ_MEMORY_BODY = ToolDefinition(
@@ -634,6 +636,8 @@ READ_MEMORY_BODY = ToolDefinition(
     category="memory",
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: user/agent-written .md body
+    # #6184 段3-4: slug is identifying from its own first characters.
+    subject_params=("slug",),
 )
 
 REMEMBER_SHARED = ToolDefinition(
@@ -646,6 +650,9 @@ REMEMBER_SHARED = ToolDefinition(
     handler=_handle_remember_shared,
     category="memory",
     purity="side_effect",
+    # #6184 段3-4: name (human label, when given) first, then the required
+    # slug -- same priority-order shape as exec's own (cmd, argv).
+    subject_params=("name", "slug"),
 )
 
 REMEMBER_AGENT = ToolDefinition(
@@ -658,6 +665,9 @@ REMEMBER_AGENT = ToolDefinition(
     handler=_handle_remember_agent,
     category="memory",
     purity="side_effect",
+    # #6184 段3-4: name (human label, when given) first, then the required
+    # slug -- same priority-order shape as exec's own (cmd, argv).
+    subject_params=("name", "slug"),
 )
 
 FORGET_MEMORY = ToolDefinition(
@@ -670,4 +680,6 @@ FORGET_MEMORY = ToolDefinition(
     handler=_handle_forget_memory,
     category="memory",
     purity="side_effect",
+    # #6184 段3-4: slug is identifying from its own first characters.
+    subject_params=("slug",),
 )

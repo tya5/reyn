@@ -137,4 +137,6 @@ MCP_DROP_SERVER_OP = ToolDefinition(
     handler=_handle_mcp_drop_server_op,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: server is identifying from its own first characters.
+    subject_params=("server",),
 )
