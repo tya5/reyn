@@ -329,11 +329,16 @@ def _tool_head(msg: "OutboxMessage") -> Text:
     subject_display, args_display = compose_tool_head(
         msg.subject, composed, subject_keys=subject_keys,
     )
+    # #6205: `args_display` is `""` (never a stray `"()"`) when nothing is
+    # left to show — the trailing `" "` separator must not be emitted
+    # either in that case, same rule for both the subject and no-subject
+    # branches (no "only when a subject is present" special case).
+    parts: list = [(tool, "bold")]
     if subject_display:
-        return Text.assemble(
-            (tool, "bold"), " ", (subject_display, _CC_TEXT), " ", (args_display, _CC_DIM),
-        )
-    return Text.assemble((tool, "bold"), (args_display, _CC_DIM))
+        parts += [" ", (subject_display, _CC_TEXT)]
+    if args_display:
+        parts += [" ", (args_display, _CC_DIM)] if subject_display else [(args_display, _CC_DIM)]
+    return Text.assemble(*parts)
 
 
 #: How many lines of a full tool result the expanded view shows before it stops.
@@ -578,14 +583,15 @@ def _collapsed_retrieval_line(msg: "OutboxMessage") -> "Text | None":
     subject_display, args_display = compose_tool_head(
         msg.subject, composed, subject_keys=subject_keys,
     )
+    # #6205: see _tool_head's own comment — no stray separator when
+    # `args_display` is empty, same rule for both branches.
+    parts: list = [(tool, _CC_DIM)]
     if subject_display:
-        return Text.assemble(
-            (tool, _CC_DIM), " ", (subject_display, _CC_DIM), " ", (args_display, _CC_DIM),
-            (" → ", _CC_DIM), (summary, _CC_DIM),
-        )
-    return Text.assemble(
-        (tool, _CC_DIM), (args_display, _CC_DIM), (" → ", _CC_DIM), (summary, _CC_DIM),
-    )
+        parts += [" ", (subject_display, _CC_DIM)]
+    if args_display:
+        parts += [" ", (args_display, _CC_DIM)] if subject_display else [(args_display, _CC_DIM)]
+    parts += [(" → ", _CC_DIM), (summary, _CC_DIM)]
+    return Text.assemble(*parts)
 
 
 def _running_indicator(msg: "OutboxMessage", now: float) -> Text:

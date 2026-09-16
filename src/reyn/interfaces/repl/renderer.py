@@ -1160,12 +1160,15 @@ def format_inline_message(msg: OutboxMessage, *, neutralize_body: bool = False):
         subject_display, args_display = compose_tool_head(
             msg.subject, composed, subject_keys=subject_keys,
         )
+        # #6205: `args_display` is `""` (never a stray `"()"`) when
+        # nothing is left to show — the trailing `" "` separator must
+        # not be emitted either, same rule for both branches.
+        parts: list = [(tool, "bold")]
         if subject_display:
-            body = Text.assemble(
-                (tool, "bold"), " ", (subject_display, _CC_TEXT), " ", (args_display, _CC_DIM),
-            )
-        else:
-            body = Text.assemble((tool, "bold"), (args_display, _CC_DIM))
+            parts += [" ", (subject_display, _CC_TEXT)]
+        if args_display:
+            parts += [" ", (args_display, _CC_DIM)] if subject_display else [(args_display, _CC_DIM)]
+        body = Text.assemble(*parts)
         return _gutter_grid("▸ ", _CC_TEXT, body)
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
