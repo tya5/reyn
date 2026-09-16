@@ -24,10 +24,21 @@ name: scaffold-removed-by-stale gate
 # #5831, verbatim: "第三者の release 時刻が reyn の merge 可否を握らない"
 # -- here it is an issue-closure's timing, not a release's, but the same
 # principle: state neither this PR's author nor its reviewer controls
-# must never decide whether an UNRELATED PR can merge). A scheduled red
-# run is visible on the Actions tab; nothing auto-files a tracking issue
-# (unlike dependency-drift-canary.yml) -- this gate does not request
-# `issues: write`, only the `issues: read` its own `gh api` calls need.
+# must never decide whether an UNRELATED PR can merge).
+#
+# lead-coder BLOCKING (PR #6212 review, issuecomment-5706176531): a
+# schedule run with no reader reproduces this gate's OWN subject --
+# this module's own docstring, verbatim: "until a REVIEW OF AN
+# UNRELATED ISSUE happened to surface it". A red Actions-tab run
+# nobody is looking at has no bounding subject (CLAUDE.md's own "who
+# stops this if it repeats?"). Fixed by taking the OTHER half of
+# dependency-drift-canary.yml's own precedent too: on a scheduled/
+# dispatched red, open OR UPDATE (never a fresh issue each time --
+# that "buries the history", same file's own comment) one tracking
+# issue. A `pull_request`-triggered red does NOT also file one -- that
+# run already has a reader (the PR's own author, via the red check
+# itself); filing here would be a duplicate, unread signal for a
+# problem the PR's own diff already surfaces plainly.
 on:
   pull_request:
     paths:
@@ -42,7 +53,7 @@ on:
 
 permissions:
   contents: read
-  issues: read
+  issues: write
 
 jobs:
   scaffold-removed-by-stale:
@@ -73,3 +84,38 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
           python scripts/check_scaffold_removed_by_stale.py
+
+      # if: failure() && not pull_request -- see the module comment above
+      # for why a PR-triggered red does not ALSO file one (that run
+      # already has a reader). Mirrors dependency-drift-canary.yml's own
+      # "Open or update the drift-tracking issue" step shape exactly
+      # (label create-if-missing, find the one open-labeled issue,
+      # comment on it if found, create it if not -- never a fresh issue
+      # per occurrence).
+      - name: Open or update the scaffold-removed-by-stale tracking issue
+        if: failure() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -e
+          LABEL="scaffold-removed-by-stale"
+          TITLE="scaffold-removed-by-stale gate red -- a scaffold file's removed_by condition is met"
+          gh label create "$LABEL" --repo "${{ github.repository }}" \
+            --description "Opened/updated by scaffold-removed-by-stale-gate.yml (#6209) -- never blocks an unrelated PR" \
+            --color "d93f0b" 2>/dev/null || true
+
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --label "$LABEL" --json number --jq '.[0].number // empty')
+
+          BODY="**[scaffold-removed-by-stale-gate]** — the scheduled run found at least one \`tests/scaffold/\` file whose \`removed_by\` condition is already met, on $(date -u +%F).
+
+          Run: ${RUN_URL}
+
+          This does **not** block any PR by itself — this run came from \`schedule\`/\`workflow_dispatch\`, not \`pull_request\`. Read the run log above for which file(s), then remove them in an ordinary PR. This is the #6209 incident shape itself: an issue closed by an UNRELATED PR left a landed scaffold file's own removal condition met, with nobody noticing until this run."
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --label "$LABEL" --body "$BODY"
+          fi
