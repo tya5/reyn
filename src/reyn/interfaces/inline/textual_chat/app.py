@@ -5488,7 +5488,20 @@ class TextualChatApp(App):
         dispatched no tools: nothing ever looks up a call_id belonging
         to a call that dispatched no tools, so an unused entry here is
         dead weight, never a wrong nesting (#4776 tracks this dict's
-        own session-lifetime growth separately — not this fix's scope)."""
+        own session-lifetime growth separately — not this fix's scope).
+
+        #6184 段4-A: ``dispatched_tool_calls`` is now the DECLARED CHILD
+        COUNT (an int), not a bool — checked below, verbatim, only for
+        truthiness. Confirmed (not assumed) this is the ONLY real reader
+        (``git grep -n 'dispatched_tool_calls' src/reyn/interfaces/``):
+        ``0`` and an absent key are BOTH falsy in Python, and this is a
+        bare ``if meta.get(...):`` — a genuine count of ``0`` (a round
+        that dispatched no tools, reached via the count path rather than
+        the bool one) and a genuinely MISSING key (an older/foreign
+        frame that never carried this field at all) read identically
+        here, same as they did when the value was a bool. No distinction
+        is needed by this reader; a FUTURE reader that DOES need to tell
+        "0 dispatched" apart from "field absent" cannot use truthiness."""
         call_id = meta.get("call_id")
         if kind != "agent" or not call_id:
             return
