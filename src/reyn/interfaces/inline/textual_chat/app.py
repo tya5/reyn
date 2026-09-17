@@ -1412,6 +1412,12 @@ class TextualChatApp(App):
         # run_textual_chat's own capture window), this pump ALWAYS runs
         # for every App instance — always constructed, never None.
         self._pump_swallow_stats = PumpSwallowStats()
+        # #6198: bounds :meth:`_record_call_parent_collision`'s own
+        # audit-event emission to one per DISTINCT call_id — process-
+        # lifetime, not per-session (see that method's own docstring for
+        # why), so always constructed here, never None, matching
+        # ``_pump_swallow_stats`` immediately above.
+        self._call_parent_collisions_seen: "set[str]" = set()
         # #5149: the two halves of "current location" are seeded TOGETHER,
         # one ``_Destination`` construction — see that class's own
         # docstring for why they can no longer be seeded (or later updated)
@@ -1493,6 +1499,15 @@ class TextualChatApp(App):
         # is never reused, so the dict only grows for the life of the
         # conversation (bounded by the same session lifetime the flow model
         # itself already is).
+        #
+        # #6198: "is never reused" above is an ASSUMPTION about a THIRD
+        # PARTY (litellm's own response ``id``), not something reyn
+        # verifies or enforces — neither OpenAI's nor litellm's own
+        # documentation states a uniqueness scope (investigation,
+        # 0 observed instances). If it were ever false, this dict's own
+        # write in :meth:`_register_call_parent` would silently overwrite
+        # an existing entry; :meth:`_record_call_parent_collision` makes
+        # that overwrite durably observable without changing it.
         self._call_parents: "dict[str, Entry[OutboxMessage]]" = {}
         # #4691 arc item ① (final item): the CURRENT turn's own ``kind="user"``
         # row — set the moment :meth:`_handle_turn_started_event` promotes it,
@@ -5517,10 +5532,25 @@ class TextualChatApp(App):
         spins, it simply no longer starts folded. A round declaring 2+
         still folds, matching #4691 item 3's own original ruling for
         every case except the single-child one the owner's own report
-        was about."""
+        was about.
+
+        #6198 (investigation, 0 observed instances): ``call_id`` is
+        litellm's own response ``id`` — a THIRD PARTY's identifier,
+        whose uniqueness scope neither OpenAI's nor litellm's own
+        documentation states (``_response_call_id``'s own docstring,
+        ``llm.py``). If a provider ever reused one, this dict's own
+        overwrite below would silently bundle an unrelated round's
+        children under the wrong parent. This method's OWN behavior on
+        that overwrite is UNCHANGED — the point of this detector is
+        observability, not correction (a design that mints reyn's own
+        round id would be a real behavior change, gated on evidence
+        this detector can now actually produce, per #6198's own
+        ruling). See :meth:`_record_call_parent_collision`."""
         call_id = meta.get("call_id")
         if kind != "agent" or not call_id:
             return
+        if call_id in self._call_parents:
+            self._record_call_parent_collision(call_id)
         self._call_parents[call_id] = entry
         declared_children = meta.get("dispatched_tool_calls")
         if declared_children:
@@ -5572,6 +5602,50 @@ class TextualChatApp(App):
             # longer starts folded.
             if declared_children >= 2:
                 entry.collapse()
+
+    def _record_call_parent_collision(self, call_id: str) -> None:
+        """#6198 (investigation, lead-coder ruling — accept① of this
+        detector's own stage): a SECOND ``kind="agent"`` row arriving
+        with a ``call_id`` already present in :attr:`_call_parents`
+        means :meth:`_register_call_parent`'s own overwrite is about to
+        silently re-point that key at a DIFFERENT ``Entry`` — the exact
+        symptom #6198 names ("無関係な行が1つのgroupに束ねられる").
+        The overwrite still happens, unchanged (accept③ — this method
+        is diagnostic-only, never a behavior change); this call is the
+        ONLY thing that makes the event durable instead of invisible.
+
+        Bounded by the DISTINCT ``call_id`` value, the same
+        "record every occurrence, emit only the first" shape
+        :meth:`_record_pump_swallow`/:class:`PumpSwallowStats` already
+        established (#5732) for the identical charter concern ("who
+        bounds this if it repeats") — a provider that reused one id
+        across many rounds would otherwise flood ``.reyn/events`` with
+        one record per repeat of the SAME already-known fact.
+        :attr:`_call_parent_collisions_seen` is process-lifetime, not
+        per-session (unlike :attr:`_call_parents` itself, in
+        :attr:`_PER_SESSION_DICT_STATE`) — matching
+        :attr:`_pump_swallow_stats`'s own scoping rationale: this is a
+        diagnostic about whether the defect has EVER been observed,
+        not part of any one session's own conversation state.
+
+        ``emit_cli_event`` — the same choice :meth:`_record_pump_swallow`
+        made and documented (cwd-derived project root, correct for this
+        single-invocation CLI entrypoint); best-effort, an emit failure
+        here must never propagate into registration."""
+        if call_id in self._call_parent_collisions_seen:
+            return
+        self._call_parent_collisions_seen.add(call_id)
+        try:
+            from reyn.core.events.events import emit_cli_event
+
+            emit_cli_event("call_parent_registration_collided", call_id=call_id)
+        except Exception:
+            logger.exception(
+                "textual chat: failed to emit "
+                "call_parent_registration_collided for call_id=%r "
+                "(diagnostic-only, does not block registration)",
+                call_id,
+            )
 
     def _record_pump_swallow(self, kind: str, exc: BaseException) -> None:
         """#5732: the ONE call site every ``except Exception`` block in

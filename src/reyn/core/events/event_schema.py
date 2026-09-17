@@ -503,6 +503,14 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "budget_caps_updated",
     "budget_reset",
     "bus_subscriber_dropped",
+    # #6198 (investigation): a repeated `call_id` at Group-parent
+    # registration (`app.py:_register_call_parent`) -- litellm's own
+    # response id, a THIRD PARTY's identifier whose uniqueness scope is
+    # unstated by both OpenAI's and litellm's own documentation. One
+    # event per FIRST occurrence of a given call_id (the SAME bounded-
+    # by-key shape #5732's pump_exception_swallowed established) --
+    # detection only, the overwrite itself is unchanged.
+    "call_parent_registration_collided",
     "canonical_degraded",
     "canonical_fallback_used",
     "chain_peer_discarded",
