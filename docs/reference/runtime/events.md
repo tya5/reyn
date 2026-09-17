@@ -46,6 +46,7 @@ body_summary_hard_truncated
 budget_caps_updated
 budget_reset
 bus_subscriber_dropped
+call_parent_registration_collided
 canonical_degraded
 canonical_fallback_used
 chain_peer_discarded
@@ -826,6 +827,26 @@ a deliberately BOUNDED companion, not a duplicate of that count.
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
 | `pump_exception_swallowed` | One of the pump's 4 `except Exception` blocks caught an exception. Fires only on the FIRST time a given `(frame_kind, exception type)` pair is seen this process (`PumpSwallowStats.record`) — a broken call site fails on every frame, so a durable record per OCCURRENCE would flood `.reyn/events` with thousands of rows for one defect; the bounded count above already carries the complete tally. Never carries the exception's own message or traceback — `logger.exception` (unchanged, already called at all 4 sites) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, matching `install_asyncio_exception_handler`'s own posture for `reyn chat` — a single-invocation, single-cwd CLI entrypoint, unlike a long-lived multi-project server): an emit failure here is logged and swallowed, never propagated into the pump. | `frame_kind` (the pump message's own `kind` — `__copy_last_reply__` \| `__rewind_list__` \| `__open_artifact__` \| the `_ingest_frame` frame's `kind`), `exception_type` (`type(exc).__name__`) |
+
+## Call-parent registration
+
+`TextualChatApp._call_parents` (`app.py`, #4691 Phase B) nests a round's
+`tool_call_*` rows under their own litellm-response `agent` row, keyed by
+`call_id` — litellm's own response `id`, a THIRD PARTY's identifier
+(`_response_call_id`, `src/reyn/llm/llm.py`). Neither OpenAI's nor litellm's
+own documentation states a uniqueness SCOPE for that field (#6198
+investigation, 0 observed instances as of this writing). Registration's own
+write (`_register_call_parent`) is an unconditional overwrite — unchanged by
+this event's own addition (#6198's own ruling: detection only, never a
+behavior change) — so a reused `call_id` would otherwise silently re-point
+the registry at a different round's own row with no operator-visible signal.
+The SAME bounded-by-key shape `pump_exception_swallowed` above established
+(one event per first occurrence, never per occurrence — a provider that
+reused one id across many rounds must not flood `.reyn/events`).
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `call_parent_registration_collided` | `_register_call_parent` saw a `call_id` already present in `_call_parents` — a SECOND `kind="agent"` row registering under an id already claimed by an earlier one. Fires only on the FIRST time a given `call_id` collides this process (`_call_parent_collisions_seen`, process-lifetime — not per-session, since this is a diagnostic about whether the defect has EVER been observed). The overwrite itself is UNCHANGED: `_call_parents[call_id]` still ends up pointing at the LATEST entry. Best-effort (`emit_cli_event`, the same choice/posture `pump_exception_swallowed` made): an emit failure here is logged and swallowed, never propagated into registration. | `call_id` (the colliding value) |
 
 ## Replay
 
