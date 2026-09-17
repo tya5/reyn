@@ -191,6 +191,80 @@ async def test_execs_summary_line_never_drops_network_end_to_end() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_subject_between_value_width_and_subject_width_is_not_cut() -> None:
+    """Tier 2: BLOCKING fix (lead-coder, measured) — the subject's own
+    budget is genuinely GREATER than a secondary value's, not a repeated
+    default. A subject 30 chars long (over `value_width`=24, the budget
+    an ordinary k=v value gets, but under `subject_width`=40) must NOT
+    be cut — a k=v value of the SAME length, in the same row, IS cut.
+    Proves the privilege behaviorally, not by comparing the two raw
+    constants."""
+    subject_30 = "x" * 30
+    value_30 = "y" * 30
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(
+            _started("exec", {"cmd": subject_30, "network": True, "extra_option": value_30})
+        )
+        await pilot.pause()
+        await transport.push_display(_completed("exec", {"status": "ok"}))
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+        (entry,) = flow.entries
+        text = await _plain_async(app, entry, 80)
+        assert subject_30 in text, (
+            "a 30-char subject must survive whole -- it is under "
+            "subject_width (40), even though it exceeds value_width (24)"
+        )
+        assert value_30 not in text, (
+            "a 30-char k=v VALUE of the same length must still be cut -- "
+            "only the subject is privileged, not values in general"
+        )
+
+
+@pytest.mark.asyncio
+async def test_narrowing_to_fit_width_80_shrinks_args_never_the_subject() -> None:
+    """Tier 2: BLOCKING fix (lead-coder, verbatim: "両立しないときは args
+    側から削る。subject から削らない") — adding MORE secondary args to
+    the SAME long subject must not shrink the subject's own displayed
+    text at all; only the args side may narrow further."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        # Round 1: subject + 2 args (lead-coder's own worked example).
+        await transport.push_display(
+            _started("exec", {"cmd": _EXEC_CMD, "timeout": 120, "network": False}, op_id="op-1")
+        )
+        await pilot.pause()
+        await transport.push_display(_completed("exec", {"status": "ok"}, op_id="op-1"))
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+        (entry_a,) = flow.entries
+        text_a = await _plain_async(app, entry_a, 80)
+        subject_shown_a = text_a.split("(")[0]
+
+        # Round 2: SAME subject + a 3rd, wider arg set (the owner's own
+        # original 4-arg artifact case).
+        await transport.push_display(
+            _started("exec", {"cmd": _EXEC_CMD, "timeout": 120, "network": True, "collect": "both"}, op_id="op-2")
+        )
+        await pilot.pause()
+        await transport.push_display(_completed("exec", {"status": "ok"}, op_id="op-2"))
+        await pilot.pause()
+        (entry_b,) = [e for e in flow.entries if e is not entry_a]
+        text_b = await _plain_async(app, entry_b, 80)
+        subject_shown_b = text_b.split("(")[0]
+
+        assert subject_shown_a == subject_shown_b, (
+            "the subject's own displayed text must be IDENTICAL regardless "
+            "of how many secondary args accompany it -- only args narrow"
+        )
+
+
+@pytest.mark.asyncio
 async def test_space_on_a_settled_row_shows_the_full_argument_text() -> None:
     """Tier 2: accept④ — the PR's own "body". Setting `_EXPANDED_KEY`
     (the SAME flag `action_toggle_fold`/Space always used, unchanged)
