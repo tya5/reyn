@@ -386,7 +386,20 @@ def _call_parent_key(meta: dict) -> "str | None":
     zero deltas reach the callback. If a FUTURE litellm version ever
     raises this exception AFTER yielding real content chunks (a
     provider-side timing change that test cannot see), this key stops
-    being unique and rows would silently misattribute."""
+    being unique and rows would silently misattribute.
+
+    ⚠️ **To whoever adds a NEW producer of a ``kind="agent"`` frame**:
+    if it carries ``call_id`` in its own ``meta``, it MUST also carry
+    ``round_index`` (both facts required, see the ``if`` just below) —
+    router_loop.py's own 2 call_id-bearing ``put_outbox`` sites carry
+    the identical warning next to their own ``round_index`` line, since
+    that is where a NEW site actually gets written. Omitting it raises
+    nothing and logs nothing: this function silently returns ``None``,
+    the row never registers, and any tool row for that round lands flat
+    instead of nesting under it. No gate catches this (#6216's own
+    investigation: this repo has no place that declares "kind X must
+    carry field Y" for a DisplayFrame/OutboxMessage — see that issue's
+    thread for why one was not built here)."""
     chain_id = meta.get("chain_id")
     round_index = meta.get("round_index")
     if not chain_id or not round_index:

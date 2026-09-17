@@ -2803,6 +2803,20 @@ class RouterLoop:
                         # shaped litellm main.py:690-698; not run-verified,
                         # and not traced through every provider adapter —
                         # #6198 issue thread). Accept④ pins that premise.
+                        #
+                        # ⚠️ TO WHOEVER ADDS A NEW kind="agent" EMIT SITE
+                        # (a 5th one, alongside this one, the terminal
+                        # no-tool reply below, and the 2 that don't carry
+                        # call_id): if the new site's meta carries
+                        # ``call_id``, it MUST also carry ``round_index``.
+                        # Omitting it does not raise or log — the row
+                        # simply never registers as a Group parent
+                        # (``_call_parent_key`` returns ``None``), and any
+                        # tool row for that round silently lands flat
+                        # instead of nesting. No gate catches this — #6216's
+                        # own investigation found no place in this repo
+                        # that DECLARES "kind X must carry field Y", so
+                        # this comment is the only witness there is.
                         "round_index": self._delta_round_index,
                         "finish_reason": result.finish_reason,
                         # #4777: a REYN-OBSERVED fact (the result's own
@@ -3252,7 +3266,10 @@ class RouterLoop:
                     # (~line 2073) for the full reasoning.
                     "call_id": result.call_id,
                     # #6198: see the tool-turn-text row's own comment for
-                    # the full key/scope reasoning.
+                    # the full key/scope reasoning. ⚠️ carrying call_id
+                    # without round_index silently drops this row's
+                    # Group-parent registration — no gate catches it,
+                    # same warning as that comment's own.
                     "round_index": self._delta_round_index,
                     "finish_reason": result.finish_reason,
                     # #4777: this is the ordinary terminal-reply path — no
