@@ -44,10 +44,13 @@ UNTOUCHED here — co-exists, never replaced (accept ⑥,
 `test_5891_tool_call_id_audit_field.py` pins that field's own contract
 separately and is NOT modified by this file).
 
-See `tests/runtime/test_lifecycle_forwarder_dispatch_id_6213.py` for the
-producer-side threading into `OutboxMessage.meta`, and
-`tests/interfaces/test_6213_running_tools_correlation.py` for the actual
-`app.py` `_running_tools` fix this dispatcher-level id exists to serve.
+`lifecycle_forwarder.py`'s own producer-side threading of this value
+into `OutboxMessage.meta` has no dedicated test file (its own
+`_enqueue_tool_call` docstring records the change) — it is exercised
+end-to-end by `tests/interfaces/test_6213_running_tools_correlation.py`
+(the actual `app.py` `_running_tools` fix this dispatcher-level id
+exists to serve) and `tests/runtime/test_6213_derive_id_dispatch.py`
+(`outbox.py`'s own derivation of `id`/`parent_id` from it).
 """
 from __future__ import annotations
 

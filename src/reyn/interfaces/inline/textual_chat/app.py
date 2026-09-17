@@ -5876,12 +5876,58 @@ class TextualChatApp(App):
         population of zero other ``.id``/``.parent_id`` readers before
         this fix); `_running_tools` is the FIRST real consumer of the
         vocabulary #6184 built. The gutter blink itself is time-based in
-        :class:`ReynGutter`, driven by the native animation tick."""
+        :class:`ReynGutter`, driven by the native animation tick.
+
+        🔴 DISCLOSED RESIDUAL (#6213, lead-coder BLOCKING ⑵ — "no silent
+        degrade"): a ``tool_call_*`` frame with NO ``dispatch_id`` at all
+        gets ``id``/``parent_id`` of ``None`` (:func:`~reyn.runtime.
+        outbox._derive_id_and_parent_id`'s own unmodified fallback), so
+        it appends as a plain DEFAULT-state row that never becomes
+        RUNNING and never coalesces with anything — no crash, but the
+        live-indicator + settle-into-one-block UX this method exists for
+        is silently absent for that ONE frame. 3 named populations
+        checked (measured against THIS PR's own diff, not "probably"):
+
+        ① in-process real dispatches — EMPTY. ``dispatch_tool``
+           (dispatcher.py) mints ``dispatch_id`` UNCONDITIONALLY now, and
+           ``lifecycle_forwarder.py``'s ``_enqueue_tool_call`` is the
+           ONLY in-process producer of these 3 kinds (grep-confirmed,
+           ``src/reyn/``) — every real call is behind that one path.
+        ② the restore-on-restart projection (``restore.py``) — EMPTY,
+           structurally, not by luck: it never goes through THIS method
+           at all. ``restore.project_restored_frames`` only ever emits
+           ``kind="tool_call_started"`` (a result is folded into that
+           SAME frame's own meta, ``RESULT_KIND_KEY``/``RESULT_META_KEY``
+           — its own docstring: "Coalesced, resolved, never RUNNING"),
+           and the app appends restored frames via
+           ``self.conversation.extend`` + ``_apply_restored_state``
+           (app.py's own restore call site) — a SEPARATE append path
+           that never calls :meth:`_apply_lifecycle_state` or touches
+           ``_running_tools`` at all, before or after this fix.
+        ③ wire version skew — NOT EMPTY, cannot be closed here. reyn
+           sessions are long-running and support LATER attach (a fresh
+           client connecting to an already-running session process); a
+           session process still running code from before this PR lands
+           would still emit the pre-#6213 ``op_id``-only shape to ANY
+           client that attaches to it, new or old (the SERVER side
+           constructs the frame; ``from_wire`` on the client only
+           decodes it verbatim, #6184's own established contract). This
+           is the ONE real, non-empty population. NOT fixed by re-adding
+           an ``op_id`` fallback here — that would reproduce the exact
+           rejected design (#6213's own ruling: keying by anything that
+           falls back to a content fingerprint "leaves that population's
+           defect unchanged AND unnoticed"); a skewed old server's row
+           simply degrades to "two independent, uncorrelated rows" here,
+           same as ANY other unrecognised-shape frame this method's own
+           "Frames without an id carry no state" sentence above already
+           documents as the general contract. Closes on its own the
+           moment every attached session's own process has restarted
+           past this PR landing — no code change removes it sooner."""
         kind = msg.kind
-        op_id = msg.id
-        if kind == "tool_call_started" and op_id is not None:
+        running_key = msg.id
+        if kind == "tool_call_started" and running_key is not None:
             entry.set_state(EntryState.RUNNING)
-            self._running_tools[op_id] = entry
+            self._running_tools[running_key] = entry
             self._begin_running_indicator(entry)
             # #3693: name the tool on the live-turn row, but only from a label
             # the frame actually carries — an unlabelled call stays the generic

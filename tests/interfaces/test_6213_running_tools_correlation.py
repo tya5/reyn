@@ -320,3 +320,56 @@ async def test_orphaned_completion_renders_identically_regardless_of_parent_id_p
     assert entry_old.state == entry_new.state
     assert str(pres_old.renderable) == str(pres_new.renderable)
     assert pres_old.background == pres_new.background
+
+
+# ── BLOCKING ⑵ (lead-coder, PR #6214 review) — the restore path never
+# touches _running_tools/msg.id at all, structurally, not by luck ────────
+
+
+@pytest.mark.asyncio
+async def test_a_restored_tool_frame_carries_no_dispatch_id_and_still_settles() -> None:
+    """Tier 2: a genuine ``project_restored_frames`` projection (a real
+    ``ChatMessage`` log, not a synthetic OutboxMessage) never calls
+    ``dispatch_tool`` at all, so its own ``tool_call_started`` frame
+    carries NO ``dispatch_id`` -- ``msg.id`` is ``None``. Confirms this
+    is HARMLESS by construction: restore appends via `conversation.
+    extend` + `_apply_restored_state` (app.py's own restore call site,
+    a SEPARATE path this PR did not touch), never through
+    `_apply_lifecycle_state`/`_running_tools` at all -- the restored row
+    still reaches its correct SUCCESS state (read directly off
+    `RESULT_KIND_KEY`, not derived from THIS fix's own correlation
+    mechanism, so a real `msg.id` was never needed for it)."""
+    from textual_flowview import EntryState
+
+    from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
+    from reyn.runtime.chat_message import ChatMessage
+
+    log = [
+        ChatMessage(
+            role="assistant", content="",
+            tool_calls=[{
+                "id": "call_1", "type": "function",
+                "function": {"name": "read_file", "arguments": '{"path": "x.py"}'},
+            }],
+        ),
+        ChatMessage(
+            role="tool", content="42 lines", name="read_file", tool_call_id="call_1",
+        ),
+    ]
+    frames = project_restored_frames(log)
+    (restored,) = [f for f in frames if f.kind == "tool_call_started"]
+    assert restored.id is None, (
+        "setup: a restored frame must carry no dispatch_id at all -- "
+        "restore never calls dispatch_tool"
+    )
+    assert restored.meta.get("dispatch_id") is None
+
+    transport = ScriptedTransport([], end=True)
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        (entry,) = app.conversation.extend([restored])
+        from reyn.interfaces.inline.textual_chat.app import _apply_restored_state
+        _apply_restored_state(restored, entry)
+        await pilot.pause()
+        assert entry.state is EntryState.SUCCESS
