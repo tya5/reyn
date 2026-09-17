@@ -290,10 +290,16 @@ def _derive_id_and_parent_id(*, kind: str, meta: dict) -> "tuple[str | None, str
     it (checked first, both gated on `dispatch_id` presence — see that
     branch's own comment at the call site for why this is a NEW
     identity source in the SAME `kind:value` vocabulary, not a 6th
-    identifier kind #6186 already ruled against):
+    identifier kind #6186 already ruled against). #6186's own compaction
+    UPDATE axis adds 2 MORE, checked FIRST of all (ahead of #6213's own
+    2 — accept④'s own witness that they cannot catch a non-compaction
+    frame, since a message either carries `compaction_episode_seq` or it
+    falls straight through to the table below, unchanged):
 
     | condition                                | id                | parent_id         |
     |-------------------------------------------|-------------------|--------------------|
+    | `compaction_episode_seq` + `compaction_episode_marker` | — | `episode:{compaction_episode_seq}` |
+    | `compaction_episode_seq`, no `compaction_episode_marker` | `episode:{compaction_episode_seq}` | — |
     | `dispatch_id` + `kind=="tool_call_started"`| `tool:{dispatch_id}` | `call:{call_id}` (unchanged) |
     | `dispatch_id` + `kind in (completed, failed)` | — | `tool:{dispatch_id}` |
     | `call_id` + `kind=="agent"`         | `call:{call_id}`| `turn:{chain_id}` |
@@ -337,6 +343,45 @@ def _derive_id_and_parent_id(*, kind: str, meta: dict) -> "tuple[str | None, str
     might add) must not collide with every other keyless row on a
     fabricated shared ``"turn:"`` value either.
     """
+    # #6186 (compaction UPDATE axis): `episode:{compaction_episode_seq}` —
+    # reyn's own fact (`Session._compaction_episode_seq`, session.py),
+    # never a THIRD PARTY's, so this is the SAME `kind:value` vocabulary
+    # extended with a new namespace, not a new identifier kind (matches
+    # #6213's own `tool:` addition, same reasoning). Checked BEFORE
+    # `dispatch_id`/`call_id` below (accept④'s own witness: a message
+    # with no `compaction_episode_seq` falls straight through, so this
+    # cannot change any non-compaction message's `id`/`parent_id`).
+    #
+    # Both producers are `kind="system"` — `kind` alone cannot tell them
+    # apart (unlike `tool_call_started` vs `completed`/`failed` above),
+    # so the branch is gated on `compaction_episode_marker`'s presence
+    # instead: `lifecycle_forwarder.py`'s 5 marker-emitting handlers
+    # (`on_compaction_started`/`failed`/`on_summary_resummarize_failed`/
+    # `on_recovery_summary_persisted`/`on_compaction_completed`, all via
+    # `_compaction_marker_meta()`) stamp the marker flag; `app.py`'s own
+    # `_ensure_compaction_progress_entry` (the progress-entry row itself)
+    # does not. `_COMPACTION_PROGRESS_KEY` (the OTHER thing that names
+    # this row, `_meta_keys.py`) is deliberately NOT read here — that
+    # module lives in `reyn.interfaces`, and importing it from this
+    # runtime-layer function would invert the layer boundary (#6106
+    # architect ruling, same reasoning).
+    #
+    # ⚠️ DISCLOSED, UNVERIFIED (#6186 issue thread — same disclosure
+    # shape as #6198's own overflow-retry premise): `compaction_episode_
+    # seq` is per-``Session``, in-process, resets to 0 on a fresh Session
+    # (a reconnect/new process) — never persisted, never cross-session
+    # (session.py's own single-increment-point discipline, #6085
+    # ruling). A stale `episode:0` from a PRIOR process could in
+    # principle collide with a fresh `episode:0` after reconnect; this
+    # has NOT been run-verified. The reasoning it is likely harmless
+    # (the progress-entry row itself is per-app-instance/volatile state
+    # too, so a reconnect that resets the counter also clears the row
+    # that could have collided with it) is INFERENCE, not a measurement.
+    if meta.get("compaction_episode_seq") is not None:
+        episode_seq = meta.get("compaction_episode_seq")
+        if meta.get("compaction_episode_marker"):
+            return None, f"episode:{episode_seq}"
+        return f"episode:{episode_seq}", None
     call_id = meta.get("call_id")
     chain_id = meta.get("chain_id")
     dispatch_id = meta.get("dispatch_id")

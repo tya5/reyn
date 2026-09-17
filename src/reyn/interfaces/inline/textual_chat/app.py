@@ -5862,8 +5862,8 @@ class TextualChatApp(App):
         # UNCHANGED (other surfaces with no episode-entry mechanism, e.g.
         # AG-UI, still receive these frames exactly as before).
         #
-        # #6085 stage 1: absorption is gated on ``compaction_episode_seq``
-        # IDENTITY, not merely "is some entry open" — the ROW's own settle
+        # #6085 stage 1: absorption is gated on episode IDENTITY, not
+        # merely "is some entry open" — the ROW's own settle
         # (``_settle_compaction_progress``) and the MARKER frames arrive on
         # two independent channels (a polled status snapshot vs. discrete
         # display frames) with no ordering guarantee between them; a
@@ -5878,6 +5878,22 @@ class TextualChatApp(App):
         # now" at THIS decision point, which would just reproduce the same
         # race one level up — closes that gap without any lock or wait.
         #
+        # #6186: the comparison itself now reads the SHARED `id`/
+        # `parent_id` vocabulary (``outbox.py``'s own
+        # ``_derive_id_and_parent_id``, the `episode:` namespace) instead
+        # of the raw ``meta["compaction_episode_seq"]`` field directly —
+        # architect's own DROP ruling (issue #6186): this comparison is
+        # the identity-resolution HALF of "same message twice → one row"
+        # and had to move WITH the identifier, or moving the identifier
+        # alone would leave this comparison reading a field the new
+        # producer branch no longer needs to guarantee, silently
+        # reintroducing the duplicate-row symptom #6085 fixed. Both sides
+        # must be real, non-``None`` `episode:` values — an entry with no
+        # id (an older producer, or #6186 not yet landed on that build)
+        # never absorbs anything, same "no key means no match" judgment
+        # ``_derive_id_and_parent_id``'s own docstring already makes for
+        # every other branch.
+        #
         # A MISMATCHED id (a genuinely new episode already started; or
         # either side carries no id at all, e.g. an older producer/a
         # forwarder built with no session context) falls through and
@@ -5885,12 +5901,17 @@ class TextualChatApp(App):
         # entry, and never silently dropped either (lead-coder ruling:
         # "見えて間違う方が良い" — a stray extra row an operator can see and
         # question beats a wrong fold nobody can see happened at all).
+        # ⚠️ That decision (append vs. drop) is deliberately UNTOUCHED by
+        # #6186 — only WHICH episode this message names moved to the
+        # shared vocabulary; the driving mechanism (``is_compacting``,
+        # the per-frame snapshot read in ``_refresh_compaction_progress``)
+        # is a separate axis architect's own #6186 ④ ruling keeps out of
+        # this message-driven comparison entirely.
         entry = self._compaction_progress_entry
         if (
-            meta.get("compaction_episode_marker")
-            and entry is not None
-            and meta.get("compaction_episode_seq") is not None
-            and entry.item.meta.get("compaction_episode_seq") == meta.get("compaction_episode_seq")
+            entry is not None
+            and entry.item.id is not None
+            and msg.parent_id == entry.item.id
         ):
             return
         # #6213: keyed by msg.parent_id (== "tool:{dispatch_id}",
@@ -8278,7 +8299,12 @@ class TextualChatApp(App):
                 # #6085 stage 1: this episode's own id, stamped ONCE at
                 # creation — read from the SAME snapshot dict the caller
                 # (_refresh_compaction_progress) already has in hand, never
-                # a second, separate "what's current now" read.
+                # a second, separate "what's current now" read. #6186:
+                # this is the INPUT outbox.py's own _derive_id_and_
+                # parent_id turns into this row's real .id
+                # (`episode:{compaction_episode_seq}`) — the value a
+                # later marker frame's own .parent_id is compared
+                # against (_ingest_frame's absorption check).
                 "compaction_episode_seq": raw.get("episode_seq"),
             },
         )

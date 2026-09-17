@@ -219,7 +219,15 @@ class ChatLifecycleForwarder:
         app.py's own absorption check treats a missing id as "does not
         match any open row", never as "matches anything", so a marker built
         this way always lands as its own row rather than risking a silent
-        wrong-episode fold."""
+        wrong-episode fold.
+
+        #6186: `compaction_episode_seq` is the INPUT `outbox.py`'s own
+        `_derive_id_and_parent_id` turns into the SHARED `id`/`parent_id`
+        vocabulary (the `episode:` namespace) — every marker built here
+        gets `parent_id="episode:{seq}"`, matching the progress-entry
+        row's own `id`. This producer-side dict is unchanged by that
+        move; only the CONSUMER's comparison (app.py's `_ingest_frame`)
+        reads the derived value instead of this raw field directly."""
         return {
             "compaction_episode_marker": True,
             "compaction_episode_seq": (
