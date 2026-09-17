@@ -64,14 +64,58 @@ independently instead" of importing ``renderer.py``'s
 ``_normalize_text``) — the same boundary, the same choice, made twice
 now for the same reason.
 
-## Subject stays UNCUT — accept ④
+## Subject is now cut too — #6208 R3, accept ④'s own withdrawal
 
-Only the ``k=v`` listing passes through the width cut below; the
-``subject`` half is placed into the final string as-is, never
-shortened. At width overflow, the trailing OPTION is what disappears,
-never the middle of the subject — the owner's own original ask (the
-executed command line as the display's CENTER) would be defeated by a
-subject that could itself be cut mid-string.
+Architect's original accept ④ ("subject stays UNCUT") is WITHDRAWN
+(issue #6208 thread, architect's own retraction, verbatim reasoning):
+its whole premise was "a subject cut mid-string would defeat the
+owner's ask for the command line as the display's CENTER" — an
+unstated premise underneath that: cutting it would have thrown the
+full text away with nowhere left to read it. #6208 R3 (the ⎿-adjacent
+call-level detail view, presenter.py's own ``_args_detail_lines``)
+removes that premise — the FULL, uncut subject is always one Space
+away — so the conclusion built on it no longer holds either
+(architect's own general form, recorded on the issue: "a conclusion
+built on a premise does not expire on its own when the premise does;
+say the premise AND its own expiry condition in the same sentence").
+
+Measured regression this closes: a real, owner-approved ``exec``
+composition (subject 66 chars alone, or the OWNER-reported real
+artifact: 247 combined chars including args) wrapped to 4-5 lines in a
+real ``TextualChatApp`` at width 80 — an overview line is no longer an
+overview once one call occupies that much scrollback.
+
+## Budget allocation — BLOCKING correction (lead-coder, measured)
+
+The first draft of this fix gave ``subject`` the SAME per-value budget
+(``value_width``, 24) every OTHER displayed value gets — "no longer a
+privileged exception". Lead-coder's own review reversed this: the
+subject is structurally privileged BY DEFINITION — it is the value a
+tool's own ``subject_params`` declaration names as the single most
+IDENTIFYING one (the same discriminator #6184 段3's own design already
+used: "does this value let a reader tell two calls to the same tool
+apart"). Giving it the SAME budget as a secondary option (e.g.
+``exec``'s own ``timeout``) inverted that ranking — the most
+identifying value got the LEAST room, expressed as a numeric
+coincidence rather than a stated priority.
+
+The fix: ``subject_width`` (40) is now genuinely GREATER than
+``value_width`` (24) — a real budget, not a repeated default. When the
+two halves of the line cannot both fit at width 80, the ARGS side
+narrows (``args_width_with_subject``, 32, well below the no-subject
+``total_width`` of 60), never the subject — "両立しないときは args 側
+から削る。subject から削らない" (lead-coder, verbatim). Both numbers
+were tuned empirically, not derived from the formula alone (a real
+``TextualChatApp``/``FlowView`` driven at width 80 — ``textual-
+flowview``'s own wrap-vs-clip behavior is a third party's property,
+confirmed via that real render, never assumed from ``repl/renderer.
+py``'s own — different stack — Rich Console ``overflow="fold"``
+choice): lead-coder's own worked example (``git log --oneline --graph
+--decorate --all`` + ``timeout``/``network``, ≈76 chars total) fits in
+one line at width 80 with these two numbers; the owner's own original
+4-arg artifact case (``…--since='2 weeks ago'`` + ``timeout``/
+``network``/``collect``) also still fits in one line — ``collect``
+(not the permission axis) is what narrows, ``network`` never does.
 
 ## No empty parens — #6205 (a 段3-2/3-3/3-4 regression)
 
@@ -114,6 +158,8 @@ def compose_tool_head(
     surface: str = "terminal",
     value_width: int = 24,
     total_width: int = 60,
+    subject_width: int = 40,
+    args_width_with_subject: int = 32,
 ) -> "tuple[str, str]":
     """Returns ``(subject_display, args_display)`` — ``args_display`` is
     the parenthesized ``"(k=v, ...)"`` string when at least one pair (or
@@ -163,12 +209,24 @@ def compose_tool_head(
     """
     neutralizer = get_neutralizer(surface)
 
+    # #6208 R3 BLOCKING (lead-coder, measured): when a subject is present,
+    # the OVERALL line has two budgets sharing one width — narrowing them
+    # equally treats the subject (the most identifying value, by
+    # definition — #6184 段3's own subject_params discriminator) the same
+    # as any secondary option, the exact inversion this fix corrects.
+    # `args_width_with_subject` (32) is the args-side budget used ONLY
+    # when a subject exists; the no-subject case keeps `total_width` (60)
+    # untouched — byte-identical to the pre-3-3 shape (accept ③, this
+    # function's own docstring above), since a subject never existed for
+    # that population to begin with.
+    effective_args_width = args_width_with_subject if subject else total_width
+
     if isinstance(composed_args, list):
         pairs = [(k, v) for k, v in composed_args if k not in subject_keys]
         joined = ", ".join(f"{k}={_cut(v, value_width)}" for k, v in pairs)
-        args_str = _cut(joined, total_width) if pairs else ""
+        args_str = _cut(joined, effective_args_width) if pairs else ""
     elif composed_args:
-        args_str = _cut(composed_args, total_width)
+        args_str = _cut(composed_args, effective_args_width)
     else:
         args_str = ""
     # #6205: empty parens are never drawn — ONE rule, no "only when a
@@ -181,6 +239,6 @@ def compose_tool_head(
 
     subject_display = ""
     if subject:
-        subject_display, _ = neutralizer.neutralize(subject)
+        subject_display, _ = neutralizer.neutralize(_cut(subject, subject_width))
 
     return subject_display, args_display

@@ -14,7 +14,14 @@ Accept, per architect's own 6-item table (issuecomment-5689016062):
    evidence: ``exec`` with ``network=True``).
 ⑵ the subject's own arg is excluded from the ``k=v`` listing.
 ⑶ a subject-less row is byte-identical to the pre-3-3 (段2b) shape.
-⑷ width overflow cuts the trailing OPTION, never the subject.
+⑷ HISTORICAL — width overflow cut the trailing OPTION, never the
+   subject. #6208 R3 (architect's own retraction, issue #6208 thread)
+   WITHDRAWS this: the subject is now cut too (matching every other
+   displayed value's own per-value budget), once R3's call-level detail
+   view (Space) gave the full text somewhere to still be read. See
+   ``test_tool_head_width_overflow_cuts_the_subject_too_now`` below for
+   the CURRENT behavior this accept item's own test now pins, and its
+   docstring for the full retraction reasoning.
 ⑸ ESC disappears from BOTH the subject and the args (single boundary).
 ⑹ ``get_neutralizer(`` is not spread across the 3 consumer sites.
 
@@ -25,8 +32,10 @@ all) — ⑸/⑹ are that closure's own witness.
 5689050164): does a LATER #6184 stage intend to falsify any assertion
 here? Checked — 段4-A/4-B (dispatched_tool_calls count, default-collapse
 predicate) touch neither `subject` nor the tool-head compose path; no
-assertion in this file is expected to go stale on purpose by a stage
-already dispatched.
+assertion in this file was expected to go stale on purpose by a stage
+already dispatched AT THE TIME this file was written. #6208 (a LATER,
+not-yet-dispatched arc at that time) intentionally invalidates ⑷ — see
+its own updated entry above and the retired test's replacement below.
 """
 from __future__ import annotations
 
@@ -171,11 +180,22 @@ def test_collapsed_retrieval_line_no_subject_matches_pre_3_3_shape() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_tool_head_width_overflow_cuts_trailing_option_not_subject() -> None:
-    """Tier 2: accept ⑷ — a long subject stays WHOLE; a long trailing
-    option gets the `…` cut. If a future change joined the subject into
-    `_truncate_args`'s own cut pass, this goes RED (the subject itself
-    would start losing characters)."""
+def test_tool_head_width_overflow_cuts_the_subject_too_now() -> None:
+    """Tier 2: accept ⑷, RETRACTED AND REVERSED — #6208 R3 (architect's
+    own retraction, issue #6208 thread, verbatim): the original accept
+    ④ premise ("a subject cut mid-string would defeat the owner's ask
+    for the command line as the display's CENTER") implicitly assumed
+    cutting it would throw the full text away with nowhere left to read
+    it. R3's own call-level detail view (Space) removes that premise —
+    the full, uncut subject is always one keypress away — so the
+    conclusion built on it no longer holds either.
+
+    A long subject now gets the SAME `…` cut every other displayed
+    value gets (no longer a privileged exception); a trailing option
+    still keeps its own cut, unaffected. Strip-falsify witness: if a
+    future change reverted the subject cut (restored accept ④'s old
+    shape), the FIRST assertion below goes red — the long subject would
+    appear in full again."""
     long_subject = "python " + "x" * 100
     msg = OutboxMessage(
         kind="tool_call_started", text="exec",
@@ -183,9 +203,52 @@ def test_tool_head_width_overflow_cuts_trailing_option_not_subject() -> None:
         subject=long_subject,
     )
     out = _tool_head(msg).plain
-    assert long_subject in out
+    assert long_subject not in out, (
+        "the subject must be cut now (#6208 R3 withdrew accept ④) -- "
+        "if this is failing, the withdrawal was reverted"
+    )
     assert "y" * 80 not in out
-    assert "…" in out
+    assert out.count("…") == 2, (
+        "BOTH the cut subject and the cut trailing option must carry "
+        "their own witness -- exactly one `…` each"
+    )
+
+
+def test_tool_head_a_short_subject_is_unaffected_by_the_new_cut() -> None:
+    """Tier 2: accept ⑷'s own deny side — a subject that already fits
+    inside the new per-value budget is byte-identical to before #6208
+    R3 (this file's own pre-existing short-subject tests, e.g.
+    ``test_tool_head_subject_is_outside_and_before_the_parens_network_
+    survives``, already cover this implicitly with `"echo hi"`; this
+    test names the boundary explicitly so a future width-budget change
+    has a dedicated witness for "nothing changes when nothing needed
+    cutting")."""
+    msg = OutboxMessage(
+        kind="tool_call_started", text="exec",
+        meta={"tool": "exec", "args": {"cmd": "echo hi", "network": True}},
+        subject="echo hi",
+    )
+    out = _tool_head(msg).plain
+    assert "echo hi" in out
+    assert "…" not in out
+
+
+def test_tool_head_width_overflow_never_drops_a_kv_pair_network_survives() -> None:
+    """Tier 2: #6208 R3 accept③ (lead-coder's own verbatim requirement,
+    issue #6208 dispatch: "network が概要行から消えない" — the
+    permission axis must survive width overflow, never fold into a
+    silent omission). A long subject triggers the cut above; the
+    SIBLING `network=True` k=v pair, evidence CLAUDE.md's own "does the
+    repair destroy the evidence?" question names, must still be present
+    and unclipped (short enough to never need its own per-value cut)."""
+    long_subject = "python " + "x" * 100
+    msg = OutboxMessage(
+        kind="tool_call_started", text="exec",
+        meta={"tool": "exec", "args": {"cmd": long_subject, "network": True}},
+        subject=long_subject,
+    )
+    out = _tool_head(msg).plain
+    assert "network=True" in out
 
 
 # ---------------------------------------------------------------------------
