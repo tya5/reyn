@@ -119,6 +119,12 @@ async def test_router_cap_force_close_wrap_up_emits_limit_stopped(
     meta = agent_msg.meta or {}
     assert meta.get("limit_stopped") is True
     assert meta.get("limit_kind") == "router_cap"
+    # #6216: every kind="agent" producer carries round_index from the
+    # SAME source (self._delta_round_index) — this reply's own value is
+    # genuinely 0, not fabricated: the _temp_loop RouterLoop this wrap-up
+    # runs on never entered its main loop (the only place that
+    # increments it), so it never belonged to any streaming round.
+    assert meta.get("round_index") == 0
 
     # No error message — canned fallback must NOT fire
     assert not any(m.kind == "error" for m in msgs)
@@ -155,3 +161,7 @@ async def test_router_cap_fallback_when_wrap_up_empty(
         assert not (m.meta or {}).get("limit_stopped"), (
             f"limit_stopped must not be set on canned fallback; got {m.meta}"
         )
+        # #6216: same source, same reasoning as the wrap-up reply's own
+        # round_index (test above) — this is the canned-fallback sibling
+        # of that SAME producer function.
+        assert (m.meta or {}).get("round_index") == 0
