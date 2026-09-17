@@ -57,6 +57,7 @@ class _FakeOps:
 
     async def dispatch(
         self, actions: list[dict], *, call_id: "str | None" = None,
+        round_index: "int | None" = None,
     ) -> list[dict]:
         self.dispatched = actions
         return [{"name": a["name"], "ok": True} for a in actions]

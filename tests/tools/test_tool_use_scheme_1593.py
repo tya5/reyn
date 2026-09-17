@@ -51,6 +51,7 @@ class _RecordingOps:
 
     async def dispatch(
         self, actions: list[dict], *, call_id: "str | None" = None,
+        round_index: "int | None" = None,
     ) -> list[dict]:
         self.calls.append("dispatch")
         return [{"status": "ok", "for": a["name"]} for a in actions]

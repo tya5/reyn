@@ -101,10 +101,13 @@ class EnumerateAllScheme:
 
     async def execute(self, interp: Interpretation, exec_ctx: ExecContext, ops: SchemeOps) -> ExecutionResult:
         assert isinstance(interp, Execute), "enumerate-all emits only Execute"
-        # #4691 Phase B ①(remainder): forward the round's call_id — see
-        # universal_category.py's own execute() for the full reasoning.
+        # #4691 Phase B ①(remainder) / #6198: forward the round's call_id
+        # and round_index — see universal_category.py's own execute() for
+        # the full reasoning.
+        _extra = getattr(exec_ctx, "extra", None) or {}
         results = await ops.dispatch(
-            interp.actions, call_id=(getattr(exec_ctx, "extra", None) or {}).get("call_id"),
+            interp.actions, call_id=_extra.get("call_id"),
+            round_index=_extra.get("round_index"),
         )
         return ExecutionResult(tool_results=results)
 

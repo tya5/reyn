@@ -344,6 +344,56 @@ def _apply_restored_state(msg: "OutboxMessage", entry: "Entry[OutboxMessage]") -
         entry.set_state(EntryState.ERROR)
 
 
+def _call_parent_key(meta: dict) -> "str | None":
+    """#6198: the ``_call_parents`` dict key — ``turn:{chain_id}/round:
+    {round_index}``, reyn's own facts (never ``call_id``, litellm's
+    response ``id`` — a THIRD PARTY's identifier whose uniqueness scope
+    neither OpenAI's nor litellm's own documentation states; the
+    original #4691 design, moved off per #6198's own ruling).
+
+    ``None`` when either fact is absent/falsy — a legacy/restored row, an
+    op-loop caller that never threaded a round through, or (``round_
+    index`` specifically) the pre-#6198 wire shape (an older/foreign
+    producer). ``round_index`` starts at ``1`` for a real round
+    (``RouterLoop._delta_round_index`` is incremented BEFORE the round's
+    own LLM call, never after) — ``0``/absent is never a real round, the
+    same "0 and missing both read falsy, by design" convention
+    :meth:`TextualChatApp._handle_agent_delta_event` already established
+    for this exact field (its own comment, ``round_index = data.get(
+    "round_index", 0)``).
+
+    Uniqueness scope (disclosed at THIS site per lead-coder review,
+    #6198 — not the PR body): this key is unique within "message that
+    reached the display", not within reyn's own internal state.
+    ``RouterLoop._delta_round_index`` DOES reset to 0 more than once per
+    ``chain_id`` in one turn — the context-overflow shrink/retry ladder
+    (``router_loop_driver.py``'s ``_run_with_shrink_and_byte_reduction``/
+    ``_drive_retry_ladder``) re-enters ``run_loop`` on the SAME
+    ``RouterLoop`` instance per retry attempt/rung. But an INTERRUPTED
+    lap of that ladder never reaches the outbox at all: the overflow
+    exception raises from inside litellm's own ``acompletion()``, before
+    ``chunk_stream`` is ever returned to reyn and before any content
+    chunk (or this dict's own producing row) is ever produced for that
+    lap — verified STRUCTURALLY against the openai-shaped
+    ``litellm/main.py:690-698`` (its own ``try``/``except`` wraps and
+    re-raises before ``return response``); NOT run-verified against a
+    real provider, and other provider adapters were not individually
+    traced (#6198 issue thread). ``tests/llm/test_6198_overflow_
+    precedes_streaming.py`` pins the ONE half of this reyn's own code
+    actually controls: ``recorded_acompletion`` cannot invoke ``on_
+    content_delta`` before ``await litellm.acompletion(...)`` returns,
+    by construction — a real, raising ``litellm.acompletion`` proves
+    zero deltas reach the callback. If a FUTURE litellm version ever
+    raises this exception AFTER yielding real content chunks (a
+    provider-side timing change that test cannot see), this key stops
+    being unique and rows would silently misattribute."""
+    chain_id = meta.get("chain_id")
+    round_index = meta.get("round_index")
+    if not chain_id or not round_index:
+        return None
+    return f"turn:{chain_id}/round:{round_index}"
+
+
 #: Sentinel for :meth:`TextualChatApp._pane_rows`'s optional ``snap`` argument —
 #: distinguishes "no snapshot passed, read a fresh one" from an explicit ``None``
 #: snapshot (pre-session), which must NOT trigger a second read.
@@ -1481,33 +1531,39 @@ class TextualChatApp(App):
         # frame (matched by ITS OWN parent_id against this id) transitions
         # the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
-        # #4691 Phase B B1: the litellm-call TREE PARENT for a given call_id
-        # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying a
-        # ``call_id`` registers itself here on arrival (#4777: unconditional,
-        # NOT gated on a provider's own ``finish_reason`` string — see the
-        # registration site's own comment, ``_ingest_frame``), and every
-        # ``tool_call_started``/``completed``/``failed``
-        # frame carrying a matching ``meta["call_id"]`` looks itself up here
-        # to find which Entry to nest under (``parent.append_child(...)``
-        # instead of the flat ``self.conversation.append(...)``). KEYED, not
-        # ORDER-based (owner ruling B, #4691, via #4734's review) — a dict
-        # lookup by call_id can never attach a tool row to the wrong parent
-        # even if dispatch order or interleaving assumptions ever break,
-        # unlike a single "most recently seen" pointer (the design #4734's
-        # review rejected for exactly this reason). Entries are never
-        # removed — a call_id is a member of exactly one turn's history and
-        # is never reused, so the dict only grows for the life of the
-        # conversation (bounded by the same session lifetime the flow model
-        # itself already is).
+        # #4691 Phase B B1: the litellm-call TREE PARENT (#4691 Phase 1
+        # ①②, #4734) — every ``kind="agent"`` row registers itself here on
+        # arrival (#4777: unconditional, NOT gated on a provider's own
+        # ``finish_reason`` string — see the registration site's own
+        # comment, ``_ingest_frame``), and every
+        # ``tool_call_started``/``completed``/``failed`` frame looks itself
+        # up here to find which Entry to nest under
+        # (``parent.append_child(...)`` instead of the flat
+        # ``self.conversation.append(...)``). KEYED, not ORDER-based
+        # (owner ruling B, #4691, via #4734's review) — a dict lookup can
+        # never attach a tool row to the wrong parent even if dispatch
+        # order or interleaving assumptions ever break, unlike a single
+        # "most recently seen" pointer (the design #4734's review rejected
+        # for exactly this reason).
         #
-        # #6198: "is never reused" above is an ASSUMPTION about a THIRD
-        # PARTY (litellm's own response ``id``), not something reyn
-        # verifies or enforces — neither OpenAI's nor litellm's own
-        # documentation states a uniqueness scope (investigation,
-        # 0 observed instances). If it were ever false, this dict's own
-        # write in :meth:`_register_call_parent` would silently overwrite
-        # an existing entry; :meth:`_record_call_parent_collision` makes
-        # that overwrite durably observable without changing it.
+        # #6198: KEYED BY ``turn:{chain_id}/round:{round_index}`` — reyn's
+        # OWN facts, built by :meth:`_resolve_append_parent` — NEVER by
+        # ``call_id`` (litellm's own response ``id``, a THIRD PARTY's
+        # identifier whose uniqueness scope neither OpenAI's nor litellm's
+        # own documentation states — the original design, #4691; moved off
+        # it per #6198's own ruling, which measured the replacement fact
+        # was ALREADY there: ``RouterLoop._delta_round_index``, merely not
+        # threaded to this dict's own producers/consumers yet). ``call_id``
+        # stays on every row's own ``meta`` (provider/debug tracking — the
+        # SAME role/co-exist split #6213 made for ``call_id`` vs
+        # ``dispatch_id``) but is never dict-key material here again.
+        # See :meth:`_resolve_append_parent` for the key's own uniqueness
+        # scope and disclosed limits. Entries are never removed — a
+        # ``(chain_id, round_index)`` pair is a member of exactly one
+        # turn's history and is never reused (both are reyn's own,
+        # monotonic within their scope), so the dict only grows for the
+        # life of the conversation (bounded by the same session lifetime
+        # the flow model itself already is).
         self._call_parents: "dict[str, Entry[OutboxMessage]]" = {}
         # #4691 arc item ① (final item): the CURRENT turn's own ``kind="user"``
         # row — set the moment :meth:`_handle_turn_started_event` promotes it,
@@ -5414,18 +5470,19 @@ class TextualChatApp(App):
         :class:`_StreamingReply`, registering visibility tracking — stays
         entirely its own, in :meth:`_handle_agent_delta_event`).
 
-        ① call_id lookup (never "most recently appended" order — see
-        :attr:`_call_parents`'s own docstring) — #4691 Phase B B1.
+        ① round-key lookup (never "most recently appended" order — see
+        :attr:`_call_parents`'s own docstring) — #4691 Phase B B1, keyed
+        per #6198 (below).
         ② the CURRENT turn's own parent, if one is open — #4691 arc item
         ①, one layer above ①. This is what makes the nesting RECURSIVE
         without extra code: the turn's first ``kind="agent"`` row lands
-        here (② fires, ① doesn't yet — it has no call_id parent of its
+        here (② fires, ① doesn't yet — it has no round-key parent of its
         OWN), then registers itself as a ``_call_parents`` entry
         (:meth:`_register_call_parent`), so every LATER row for that same
-        call_id finds it via ① — user row → call row → tool rows, three
+        round finds it via ① — user row → call row → tool rows, three
         levels, one mechanism per level.
         ③ flat top-level (``None``) — a legacy/restored row, an op-loop
-        caller that never threaded a call_id through, or no turn open.
+        caller that never threaded a round through, or no turn open.
 
         ``kind != "user"`` in ② is deliberate, not incidental: a
         ``kind="user"`` frame is never anything OTHER than a turn's own
@@ -5434,9 +5491,24 @@ class TextualChatApp(App):
         (:meth:`_handle_intervention_answer_event`) — neither should ever
         nest under a PRIOR turn's parent. (Whether an intervention-answer
         fallback row landing mid-turn should instead nest under the
-        CURRENT turn is an owner-visual call, not decided here.)"""
-        call_id = meta.get("call_id")
-        parent = self._call_parents.get(call_id) if call_id else None
+        CURRENT turn is an owner-visual call, not decided here.)
+
+        #6198: ① keys on :func:`_call_parent_key` — ``turn:{chain_id}/
+        round:{round_index}`` (reyn's own facts), NEVER ``call_id`` (a
+        THIRD PARTY's id — the original #4691 design; moved off it per
+        #6198's own ruling). Unique within "message that reached the
+        display" because an INTERRUPTED overflow-retry round never
+        reaches the outbox at all — the overflow raises from inside
+        litellm's own ``acompletion()``, before any content chunk or
+        terminal row is ever produced for that lap (verified
+        structurally against openai-shaped ``litellm/main.py:690-698``;
+        NOT run-verified, and not traced through every provider adapter
+        — #6198 issue thread). The #6215 collision detector (kept as a
+        general borrowed-key watchdog, no longer specific to this dict)
+        stays silent under this key BY CONSTRUCTION — see
+        :meth:`_register_call_parent`'s own note."""
+        parent_key = _call_parent_key(meta)
+        parent = self._call_parents.get(parent_key) if parent_key else None
         if parent is None and kind != "user" and self._current_turn_parent is not None:
             parent = self._current_turn_parent
         return parent
@@ -5481,8 +5553,9 @@ class TextualChatApp(App):
         self, entry: "Entry[OutboxMessage]", kind: str, meta: dict
     ) -> None:
         """Register ``entry`` as a call-level Group parent when it carries
-        a ``call_id`` — #4691 Phase B B1/④, #4777, #4691's own
-        streaming-bypass fix (architect via lead-coder). Called from TWO
+        a round key (:func:`_call_parent_key`) — #4691 Phase B B1/④, #4777,
+        #4691's own streaming-bypass fix (architect via lead-coder). Called
+        from TWO
         sites: :meth:`_ingest_frame`'s normal (non-streaming) append, and
         the streaming-settle branch of that same method, once a streamed
         round's completion frame finally carries its real ``call_id``/
@@ -5502,12 +5575,12 @@ class TextualChatApp(App):
         inert for them, despite being green in every test written
         against a provider that DOES report it correctly.
 
-        Registering unconditionally for every ``call_id``-bearing agent
-        row is harmless even for an ordinary terminal reply that
-        dispatched no tools: nothing ever looks up a call_id belonging
-        to a call that dispatched no tools, so an unused entry here is
-        dead weight, never a wrong nesting (#4776 tracks this dict's
-        own session-lifetime growth separately — not this fix's scope).
+        Registering unconditionally for every row carrying a round key
+        is harmless even for an ordinary terminal reply that dispatched
+        no tools: nothing ever looks up a round key belonging to a call
+        that dispatched no tools, so an unused entry here is dead
+        weight, never a wrong nesting (#4776 tracks this dict's own
+        session-lifetime growth separately — not this fix's scope).
 
         #6184 段4-A: ``dispatched_tool_calls`` is now the DECLARED CHILD
         COUNT (an int), not a bool — read below, first for truthiness
@@ -5534,24 +5607,27 @@ class TextualChatApp(App):
         every case except the single-child one the owner's own report
         was about.
 
-        #6198 (investigation, 0 observed instances): ``call_id`` is
-        litellm's own response ``id`` — a THIRD PARTY's identifier,
-        whose uniqueness scope neither OpenAI's nor litellm's own
-        documentation states (``_response_call_id``'s own docstring,
-        ``llm.py``). If a provider ever reused one, this dict's own
-        overwrite below would silently bundle an unrelated round's
-        children under the wrong parent. This method's OWN behavior on
-        that overwrite is UNCHANGED — the point of this detector is
-        observability, not correction (a design that mints reyn's own
-        round id would be a real behavior change, gated on evidence
-        this detector can now actually produce, per #6198's own
-        ruling). See :meth:`_record_call_parent_collision`."""
-        call_id = meta.get("call_id")
-        if kind != "agent" or not call_id:
+        #6198's own structural fix (this method's CURRENT state): the key
+        is now :func:`_call_parent_key` — ``turn:{chain_id}/round:
+        {round_index}``, reyn's own facts, never ``call_id`` (the
+        investigation's own finding: a THIRD PARTY's identifier whose
+        uniqueness scope neither OpenAI's nor litellm's own documentation
+        states, ``_response_call_id``'s own docstring, ``llm.py``). A
+        registration under this key can still collide in principle (two
+        rows landing on the exact same ``(chain_id, round_index)`` pair)
+        — :meth:`_record_call_parent_collision` (#6215, kept as a general
+        borrowed/reused-key watchdog, not specific to this dict any more)
+        still fires if it ever does, unchanged, still diagnostic-only.
+        Structurally this should no longer happen for a real round (see
+        :func:`_call_parent_key`'s own docstring for the disclosed scope
+        of that claim) — a silent detector here is the WITNESS of that,
+        not evidence removed."""
+        parent_key = _call_parent_key(meta)
+        if kind != "agent" or not parent_key:
             return
-        if call_id in self._call_parents:
-            self._record_call_parent_collision(call_id)
-        self._call_parents[call_id] = entry
+        if parent_key in self._call_parents:
+            self._record_call_parent_collision(parent_key)
+        self._call_parents[parent_key] = entry
         declared_children = meta.get("dispatched_tool_calls")
         if declared_children:
             # #4691 Phase B ④: the parent's own spinner starts here — its
@@ -5604,15 +5680,27 @@ class TextualChatApp(App):
                 entry.collapse()
 
     def _record_call_parent_collision(self, call_id: str) -> None:
-        """#6198 (investigation, lead-coder ruling — accept① of this
+        """#6198 (investigation stage, lead-coder ruling — accept① of this
         detector's own stage): a SECOND ``kind="agent"`` row arriving
-        with a ``call_id`` already present in :attr:`_call_parents`
-        means :meth:`_register_call_parent`'s own overwrite is about to
+        with a key already present in :attr:`_call_parents` means
+        :meth:`_register_call_parent`'s own overwrite is about to
         silently re-point that key at a DIFFERENT ``Entry`` — the exact
-        symptom #6198 names ("無関係な行が1つのgroupに束ねられる").
+        symptom #6198's investigation stage named ("無関係な行が1つの
+        groupに束ねられる").
         The overwrite still happens, unchanged (accept③ — this method
         is diagnostic-only, never a behavior change); this call is the
         ONLY thing that makes the event durable instead of invisible.
+
+        #6198's own STRUCTURAL fix stage: the caller's key changed from
+        ``call_id`` (litellm's, borrowed) to :func:`_call_parent_key`'s
+        composite (reyn's own) — this method's own parameter/field name
+        stayed ``call_id`` for zero churn to its existing direct unit
+        tests, but it is now a GENERAL borrowed/reused-key witness, not
+        specific to ``_call_parents`` — lead-coder's own framing: "検出器
+        は`_call_parents`専用でなく借り物の鍵一般の番人". Silence here
+        after this fix is the WITNESS that the new key does not collide
+        for a real round (see :func:`_call_parent_key`'s own disclosed
+        scope), never proof this detector stopped mattering.
 
         Bounded by the DISTINCT ``call_id`` value, the same
         "record every occurrence, emit only the first" shape

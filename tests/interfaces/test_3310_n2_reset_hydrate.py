@@ -720,21 +720,23 @@ async def test_reset_streaming_replies_stale_chain_id_does_not_finalize_into_gho
 async def test_reset_call_parents_stale_call_id_does_not_nest_into_ghost_parent(
     tmp_path, monkeypatch,
 ) -> None:
-    """Tier 2: ``_call_parents`` witness (#4776) — an ``agent`` row carrying a
-    ``call_id`` on alpha registers itself as a potential tree-parent
-    (``_call_parents``, #4691 Phase B B1). Left un-child'd at switch time
-    (nobody nested under it before the switch — the common no-tool-calls
-    case, made the DEFAULT registration shape by #4777/#4779: EVERY
-    call_id-bearing agent row registers now, not only ones that go on to
-    dispatch tools), its Entry is exactly the shape ``_call_parents`` was
-    never previously proven to release.
+    """Tier 2: ``_call_parents`` witness (#4776) — an ``agent`` row carrying
+    a round key (``chain_id``/``round_index`` — #6198's own structural fix;
+    ``call_id`` stays on ``meta`` for provider tracking only, no longer
+    the registration key) on alpha registers itself as a potential
+    tree-parent (``_call_parents``, #4691 Phase B B1). Left un-child'd at
+    switch time (nobody nested under it before the switch — the common
+    no-tool-calls case, made the DEFAULT registration shape by
+    #4777/#4779: EVERY round-key-bearing agent row registers now, not
+    only ones that go on to dispatch tools), its Entry is exactly the
+    shape ``_call_parents`` was never previously proven to release.
 
     ``_call_parents`` was OMITTED from :attr:`TextualChatApp.
     _PER_SESSION_DICT_STATE` before this fix — its own docstring claimed a
     conversation/session-bounded lifetime the code never actually enforced
     (the real bound was the whole app PROCESS's lifetime). After switching
-    to beta, a tool_call_started frame carrying the SAME call_id must NOT be
-    silently nested under the (now off-model, orphaned) alpha-session
+    to beta, a tool_call_started frame carrying the SAME round key must NOT
+    be silently nested under the (now off-model, orphaned) alpha-session
     parent Entry — if ``_call_parents`` were not cleared,
     ``parent.append_child(msg)`` would attach the child to a parent no
     longer reachable from the current (freshly cleared) FlowModel, and the
@@ -752,9 +754,13 @@ async def test_reset_call_parents_stale_call_id_does_not_nest_into_ghost_parent(
         async with app.run_test(size=(100, 30)) as pilot:
             await _settle(pilot)
 
+            # #6198: chain_id/round_index (not call_id alone) is what
+            # actually registers this row as a Group parent now — both
+            # required for the scenario below to reproduce a REAL
+            # registration to later prove gets cleared.
             transport.push_display(OutboxMessage(
                 kind="agent", text="alpha's own reply",
-                meta={"call_id": "call-stale"},
+                meta={"call_id": "call-stale", "chain_id": "chain-1", "round_index": 1},
             ))
             await _settle(pilot)
             assert _rows(app) == [("agent", "alpha's own reply")]
@@ -766,18 +772,23 @@ async def test_reset_call_parents_stale_call_id_does_not_nest_into_ghost_parent(
             await _settle(pilot)
             assert _rows(app) == [], "switch must clear the retained model"
 
-            # Same call_id, now on beta — must NOT nest under the stale
-            # (removed-from-model) alpha parent Entry.
+            # Same call_id AND same (chain_id, round_index), now on beta
+            # — must NOT nest under the stale (removed-from-model) alpha
+            # parent Entry (#6198: the round key, not call_id alone, is
+            # what would match it).
             transport.push_display(OutboxMessage(
                 kind="tool_call_started", text="grep",
-                meta={"tool": "grep", "op_id": "op-1", "args": {}, "call_id": "call-stale"},
+                meta={
+                    "tool": "grep", "op_id": "op-1", "args": {},
+                    "call_id": "call-stale", "chain_id": "chain-1", "round_index": 1,
+                },
             ))
             await _settle(pilot)
 
             rows = _rows(app)
             assert rows == [("tool_call_started", "grep")], (
-                "a tool row for a call_id registered before the switch must "
-                "land as a fresh, flat top-level row after reset — a "
+                "a tool row for a round key registered before the switch "
+                "must land as a fresh, flat top-level row after reset — a "
                 f"leftover _call_parents entry would swallow it silently: {rows!r}"
             )
     finally:
