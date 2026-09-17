@@ -100,8 +100,14 @@ class UniversalCategoryScheme:
         # #4691 Phase B ①(remainder): forward the round's call_id (threaded
         # via ExecContext.extra, the established per-round-context bag) so
         # every dispatched tool call carries the litellm call it belongs to.
+        # #6198: forward round_index the SAME way — reyn's own round fact,
+        # which app.py's Group-parent key (turn:{chain_id}/round:{round_
+        # index}) is built from, never call_id (a third party's id — see
+        # RouterLoop._resolve_append_parent's own docstring).
+        _extra = getattr(exec_ctx, "extra", None) or {}
         results = await ops.dispatch(
-            interp.actions, call_id=(getattr(exec_ctx, "extra", None) or {}).get("call_id"),
+            interp.actions, call_id=_extra.get("call_id"),
+            round_index=_extra.get("round_index"),
         )
         return ExecutionResult(tool_results=results)
 

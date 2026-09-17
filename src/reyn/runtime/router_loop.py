@@ -2630,6 +2630,7 @@ class RouterLoop:
                 # not because the feedback shape differs.
                 cb_feedback = await self._run_codeblock_round(
                     interp, call_id=result.call_id,
+                    round_index=self._delta_round_index,
                 )
                 await self.persist_feedback()
                 _cb_content = result.content or ""
@@ -2784,6 +2785,39 @@ class RouterLoop:
                         # (#4691 Phase B) can tell which litellm call this
                         # row belongs to and whether it was a tool round.
                         "call_id": result.call_id,
+                        # #6198: reyn's OWN round fact (never litellm's) —
+                        # app.py's Group-parent key is
+                        # ``turn:{chain_id}/round:{round_index}``, never
+                        # ``call_id`` (a THIRD PARTY's id, uniqueness scope
+                        # undocumented by either OpenAI or litellm — see
+                        # _resolve_append_parent's own docstring). The key
+                        # is unique within "message that reached the
+                        # display" because an INTERRUPTED overflow-retry
+                        # round (router_loop_driver.py's shrink/retry
+                        # ladder re-entering ``run_loop`` and re-zeroing
+                        # ``self._delta_round_index``) never reaches the
+                        # outbox at all — the overflow raises from inside
+                        # litellm's own ``acompletion()``, before any
+                        # content chunk (or this terminal row) is ever
+                        # produced (verified structurally against openai-
+                        # shaped litellm main.py:690-698; not run-verified,
+                        # and not traced through every provider adapter —
+                        # #6198 issue thread). Accept④ pins that premise.
+                        #
+                        # ⚠️ TO WHOEVER ADDS A NEW kind="agent" EMIT SITE
+                        # (a 5th one, alongside this one, the terminal
+                        # no-tool reply below, and the 2 that don't carry
+                        # call_id): if the new site's meta carries
+                        # ``call_id``, it MUST also carry ``round_index``.
+                        # Omitting it does not raise or log — the row
+                        # simply never registers as a Group parent
+                        # (``_call_parent_key`` returns ``None``), and any
+                        # tool row for that round silently lands flat
+                        # instead of nesting. No gate catches this — #6216's
+                        # own investigation found no place in this repo
+                        # that DECLARES "kind X must carry field Y", so
+                        # this comment is the only witness there is.
+                        "round_index": self._delta_round_index,
                         "finish_reason": result.finish_reason,
                         # #4777: a REYN-OBSERVED fact (the result's own
                         # ``tool_calls`` list, non-empty here by construction
@@ -2837,6 +2871,7 @@ class RouterLoop:
                 # format_feedback; returns (tool_calls, tool_results) in deduped order.
                 tool_calls, tool_results = await self._run_execute_round(
                     interp, call_id=result.call_id,
+                    round_index=self._delta_round_index,
                 )
                 # Detect async-deferred dispatches via the canonical
                 # registry (router_tools.get_dispatch_kind() →
@@ -2935,6 +2970,10 @@ class RouterLoop:
                             # #4691 Phase 1 ②: see the tool-turn-text row above
                             # for the full reasoning.
                             "call_id": result.call_id,
+                            # #6198: see the tool-turn-text row above for
+                            # the full key/scope reasoning — same call,
+                            # same round.
+                            "round_index": self._delta_round_index,
                             "finish_reason": result.finish_reason,
                             # #4777: see the tool-turn-text row above (~line
                             # 2157) for the full reasoning — this row is the
@@ -3142,6 +3181,9 @@ class RouterLoop:
                         # #4691 Phase 1 ②: see the tool-turn-text row's own
                         # comment (~line 2073) for the full reasoning.
                         "call_id": result.call_id,
+                        # #6198: see the tool-turn-text row's own comment
+                        # for the full key/scope reasoning.
+                        "round_index": self._delta_round_index,
                         "finish_reason": result.finish_reason,
                         # #4777: this is the empty-response terminal path — no
                         # tool call was dispatched, so this is False here (see
@@ -3223,6 +3265,12 @@ class RouterLoop:
                     # #4691 Phase 1 ②: see the tool-turn-text row's own comment
                     # (~line 2073) for the full reasoning.
                     "call_id": result.call_id,
+                    # #6198: see the tool-turn-text row's own comment for
+                    # the full key/scope reasoning. ⚠️ carrying call_id
+                    # without round_index silently drops this row's
+                    # Group-parent registration — no gate catches it,
+                    # same warning as that comment's own.
+                    "round_index": self._delta_round_index,
                     "finish_reason": result.finish_reason,
                     # #4777: this is the ordinary terminal-reply path — no
                     # tool call was dispatched, so this is False here (see
@@ -3655,13 +3703,17 @@ class RouterLoop:
             messages, resolved_model=resolved_model, reason=reason,
         )
 
-    async def _execute_tool(self, tc: dict, *, call_id: "str | None" = None) -> dict:
+    async def _execute_tool(
+        self, tc: dict, *, call_id: "str | None" = None,
+        round_index: "int | None" = None,
+    ) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
 
         Test-only seam (no production call site — see the callers survey in
         #4691 Phase B ①'s own PR). ``call_id`` (#4691 Phase B ①, remainder)
         defaults to None so every existing direct-call test stays byte-
-        identical.
+        identical. ``round_index`` (#6198) mirrors it — same default, same
+        reasoning (see ``_dispatch_resolved``'s own docstring).
 
         Returns the tool_result content (will be JSON-serialized into the
         next round's messages).
@@ -3699,6 +3751,7 @@ class RouterLoop:
         # tool_calls entry always carries an ``"id"``.
         return await self._dispatch_resolved(
             name, args, raw_name=raw_name, call_id=call_id,
+            round_index=round_index,
             tool_call_id=tc["id"],
         )
 
@@ -3746,6 +3799,7 @@ class RouterLoop:
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
+        round_index: "int | None" = None,
         tool_call_id: "str | None",
     ) -> dict:
         """#1593: dispatch a resolved tool call via the OS substrate
@@ -3796,7 +3850,19 @@ class RouterLoop:
         when the same tool is called twice in one round). ``None`` for any
         caller with no real litellm tool_calls entry to key on — the
         CodeAct ``_os_gate`` closure below never passes one, the same
-        degrade ``call_id`` already models for that caller."""
+        degrade ``call_id`` already models for that caller.
+
+        ``round_index`` (#6198): reyn's OWN round fact — threaded down the
+        SAME explicit-parameter path as ``call_id`` above, for the SAME
+        reason (#4734's own lesson, cited above): ``self._delta_round_index``
+        is never read directly here, because a dispatch reached outside the
+        exact per-round reassignment (an async-deferred resume, a future
+        caller) would otherwise silently pick up whatever round happens to
+        be CURRENT at that later moment, not the round the dispatch
+        actually belongs to. Every production call site captures it at the
+        SAME point it captures ``call_id`` (``result.call_id`` /
+        ``self._delta_round_index``, read together, right after the round's
+        LLM call returns)."""
         catalog = (
             self._dispatch_catalog
             if self._dispatch_catalog is not None
@@ -3829,6 +3895,7 @@ class RouterLoop:
             # equivalent of it.
             contextual=self._contextual_permission,
             call_id=call_id,
+            round_index=round_index,
             tool_call_id=tool_call_id,
             completed_response_include_text=(
                 bool(_completed_getter()) if _completed_getter else False
@@ -4080,6 +4147,7 @@ class RouterLoop:
 
     async def dispatch(
         self, actions: list[dict], *, call_id: "str | None" = None,
+        round_index: "int | None" = None,
     ) -> list[dict]:
         """SchemeOps.dispatch: run the resolved (exclude-cleared) actions SERIALLY in
         declaration order via the OS dispatch substrate.
@@ -4102,6 +4170,10 @@ class RouterLoop:
         resolved`` call in this batch. An explicit parameter, not a stored
         field (see ``_dispatch_resolved``'s own docstring for why).
 
+        ``round_index`` (#6198): reyn's own round fact, forwarded the SAME
+        way, for the SAME reason — see ``_dispatch_resolved``'s own
+        docstring.
+
         ``tool_call_id`` (#5891 (c)): read from each action's own ``"tc"``
         entry (the raw tool_calls dict, set by this method's own caller —
         see the ``actions.append({"tc": tc, ...})`` builder above), the
@@ -4118,6 +4190,7 @@ class RouterLoop:
         for a in actions:
             results.append(await self._dispatch_resolved(
                 a["name"], a["args"], raw_name=a.get("raw_name"), call_id=call_id,
+                round_index=round_index,
                 tool_call_id=a["tc"]["id"],
             ))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
@@ -4686,6 +4759,7 @@ class RouterLoop:
 
     async def _run_execute_round(
         self, interp, *, call_id: "str | None" = None,
+        round_index: "int | None" = None,
     ) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former
         ``_run_scheme_tool_round`` body. #5854: every action now flows
@@ -4703,7 +4777,13 @@ class RouterLoop:
         (the established per-round-context bag ``_run_codeblock_round``
         already uses for its own ``dispatch`` gate) so the delegating
         schemes' ``execute()`` can forward it to ``ops.dispatch(...,
-        call_id=...)`` without widening their own signature."""
+        call_id=...)`` without widening their own signature.
+
+        ``round_index`` (#6198): reyn's own round fact, threaded through the
+        SAME ``ExecContext.extra`` bag alongside ``call_id`` — see the 3
+        delegating schemes' own ``execute()`` (enumerate_all.py /
+        retrieval.py / universal_category.py), each forwarding both to
+        ``ops.dispatch()``."""
         from reyn.tools.scheme import ExecContext, Execute
 
         actions = interp.actions
@@ -4711,7 +4791,7 @@ class RouterLoop:
 
         exec_res = await self._scheme.execute(
             Execute(actions=actions),
-            ExecContext(extra={"call_id": call_id}),
+            ExecContext(extra={"call_id": call_id, "round_index": round_index}),
             ops=self,
         )
         results = list(exec_res.tool_results)
@@ -4723,6 +4803,7 @@ class RouterLoop:
 
     async def _run_codeblock_round(
         self, interp, *, call_id: "str | None" = None,
+        round_index: "int | None" = None,
     ) -> "list[dict]":
         """The ``CodeBlock`` arm body — run the CodeAct snippet via the scheme's
         ``execute`` under the OS per-call gate + sandbox, and return the scheme's
@@ -4738,7 +4819,10 @@ class RouterLoop:
 
         ``call_id`` (#4691 Phase B ①, remainder): the litellm call this
         snippet's tool() calls belong to — captured by ``_os_gate``'s own
-        closure (no field, see ``_dispatch_resolved``'s docstring)."""
+        closure (no field, see ``_dispatch_resolved``'s docstring).
+
+        ``round_index`` (#6198): reyn's own round fact, captured by the
+        SAME closure alongside ``call_id``, for the SAME reason."""
         from reyn.security.sandbox import get_default_backend  # noqa: PLC0415
         from reyn.tools.scheme import ExecContext  # noqa: PLC0415
 
@@ -4753,7 +4837,8 @@ class RouterLoop:
             # absence (an in-snippet tool() call has no litellm tool_calls
             # entry at all), never an accidentally-omitted one.
             return await self._dispatch_resolved(
-                name, args, call_id=call_id, tool_call_id=None,
+                name, args, call_id=call_id, round_index=round_index,
+                tool_call_id=None,
             )
 
         # CodeAct-safe default policy (operator-overridable in S4 via the host's

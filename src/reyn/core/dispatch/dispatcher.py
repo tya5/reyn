@@ -155,6 +155,18 @@ class DispatchContext:
     contextual: "ContextualPermission | None"
     tool_call_id: str | None  # REQUIRED, no default -- see the docstring above
     call_id: str | None = None
+    # #6198: the round this dispatch belongs to -- RouterLoop's own
+    # ``self._delta_round_index`` at round-result time, threaded down
+    # the SAME explicit-parameter path as ``call_id`` above (never read
+    # from ``self`` at dispatch time -- see ``_dispatch_resolved``'s own
+    # docstring, #4734, for why a stored/self-read value can go stale
+    # for a dispatch reached outside the exact per-round reassignment).
+    # Reyn's OWN fact (never litellm's) -- #6198's own ruling: app.py's
+    # ``_call_parents`` Group key moves from the THIRD-PARTY ``call_id``
+    # to a composite of reyn's own ``chain_id``/``round_index``; this
+    # field is that value's only path into the tool-call lifecycle
+    # events, mirroring how ``call_id`` itself reaches them.
+    round_index: int | None = None
     completed_response_include_text: bool = False
     user_input_include_text: bool = False
 
@@ -208,13 +220,19 @@ async def dispatch_tool(
     risk regressing it.
 
     Events emitted (via ctx.events.emit):
-        - tool_called (caller_kind, caller_id, tool, chain_id, call_id, args, args_hash)
-        - tool_returned (caller_kind, caller_id, tool, chain_id, call_id, result,
-          args_hash, tool_call_id -- #5891 (c), see ctx.tool_call_id's own
-          docstring above)
+        - tool_called (caller_kind, caller_id, tool, chain_id, call_id,
+          round_index, args, args_hash)
+        - tool_returned (caller_kind, caller_id, tool, chain_id, call_id,
+          round_index, result, args_hash, tool_call_id -- #5891 (c), see
+          ctx.tool_call_id's own docstring above)
             on success.
-        - tool_failed (caller_kind, caller_id, tool, chain_id, call_id, error_kind, message)
+        - tool_failed (caller_kind, caller_id, tool, chain_id, call_id,
+          round_index, error_kind, message)
             on error.
+
+    ``round_index`` (#6198): ``ctx.round_index``, threaded verbatim -- see
+    ``DispatchContext.round_index``'s own docstring for why it exists and
+    why it is never read from a stored ``self`` field.
 
     The invoker callable receives the validated args dict and returns the
     raw result (any JSON-serializable value). PermissionError raised
@@ -342,6 +360,7 @@ async def dispatch_tool(
         tool=name,
         chain_id=ctx.chain_id,
         call_id=ctx.call_id,
+        round_index=ctx.round_index,
         args=_redact_content_fields(name, args, ctx),
         args_hash=args_hash,
         dispatch_id=dispatch_id,
@@ -359,6 +378,7 @@ async def dispatch_tool(
             tool=name,
             chain_id=ctx.chain_id,
             call_id=ctx.call_id,
+            round_index=ctx.round_index,
             args_hash=args_hash,
             dispatch_id=dispatch_id,
             error_kind="permission_denied",
@@ -374,6 +394,7 @@ async def dispatch_tool(
             tool=name,
             chain_id=ctx.chain_id,
             call_id=ctx.call_id,
+            round_index=ctx.round_index,
             args_hash=args_hash,
             dispatch_id=dispatch_id,
             error_kind="exception",
@@ -399,6 +420,7 @@ async def dispatch_tool(
                 tool=name,
                 chain_id=ctx.chain_id,
                 call_id=ctx.call_id,
+                round_index=ctx.round_index,
                 args_hash=args_hash,
                 dispatch_id=dispatch_id,
                 error_kind=_err_kind,
@@ -434,6 +456,7 @@ async def dispatch_tool(
         tool=name,
         chain_id=ctx.chain_id,
         call_id=ctx.call_id,
+        round_index=ctx.round_index,
         args_hash=args_hash,
         dispatch_id=dispatch_id,
         result=_redact_content_fields(name, result, ctx),

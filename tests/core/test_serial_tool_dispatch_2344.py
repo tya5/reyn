@@ -43,6 +43,7 @@ class _OrderedDispatchLoop(RouterLoop):
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
+        round_index: "int | None" = None,
         tool_call_id: "str | None" = None,
     ) -> dict:
         if name == "write":
@@ -130,6 +131,7 @@ class _RealEventDispatchLoop(RouterLoop):
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
+        round_index: "int | None" = None,
         tool_call_id: "str | None" = None,
     ) -> dict:
         async def _invoker(a: dict):
@@ -143,7 +145,7 @@ class _RealEventDispatchLoop(RouterLoop):
             caller_kind="router", caller_id=self.host.agent_name,
             chain_id=self.chain_id, tool_catalog={name: {}}, events=self.event_log,
             contextual=None,  # #5841: no narrowing in play for these tests
-            call_id=call_id, tool_call_id=tool_call_id,
+            call_id=call_id, round_index=round_index, tool_call_id=tool_call_id,
         )
         return await dispatch_tool(name=name, args=args, ctx=dctx, invoker=_invoker)
 

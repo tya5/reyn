@@ -697,7 +697,8 @@ class ChatLifecycleForwarder:
         outbox message.
 
         Source schema (= ``dispatch/dispatcher.py:200``):
-            {caller_kind, caller_id, tool, chain_id, args, args_hash, dispatch_id}
+            {caller_kind, caller_id, tool, chain_id, args, args_hash,
+            dispatch_id, round_index}
 
         #6213: ``dispatch_id`` (not ``args_hash``, which collides BY
         DESIGN when the same tool is called with the same args twice —
@@ -718,7 +719,8 @@ class ChatLifecycleForwarder:
         outbox message.
 
         Source schema (= ``dispatch/dispatcher.py:262``):
-            {caller_kind, caller_id, tool, chain_id, args_hash, result, dispatch_id}
+            {caller_kind, caller_id, tool, chain_id, args_hash, result,
+            dispatch_id, round_index}
         """
         self._enqueue_tool_call(
             kind="tool_call_completed",
@@ -734,7 +736,8 @@ class ChatLifecycleForwarder:
         outbox message.
 
         Source schema (= ``dispatch/dispatcher.py:222``):
-            {caller_kind, caller_id, tool, chain_id, args_hash, error_kind, message, dispatch_id}
+            {caller_kind, caller_id, tool, chain_id, args_hash, error_kind,
+            message, dispatch_id, round_index}
         """
         self._enqueue_tool_call(
             kind="tool_call_failed",
@@ -965,6 +968,13 @@ class ChatLifecycleForwarder:
             # a dispatch that never threaded one through (op-loop / non-
             # router callers) — never a minted placeholder.
             "call_id": data.get("call_id"),
+            # #6198: reyn's own round fact (RouterLoop._delta_round_index
+            # at round-result time), threaded the SAME explicit-parameter
+            # path as call_id above. app.py's Group-parent lookup builds
+            # its key from THIS (+ chain_id), never from call_id — see
+            # _resolve_append_parent's own docstring for the composite
+            # key and the scope note next to it.
+            "round_index": data.get("round_index"),
         }
         # Surface run_id when present so consumers can attribute the
         # row to a parent agent thread (= sub-agent spawned tool calls

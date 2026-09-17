@@ -56,9 +56,18 @@ from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
+#: The single round every fixture below correlates through (#6198) —
+#: this file never distinguishes two DIFFERENT rounds, only turn-vs-
+#: completion Group nesting, so one shared constant keeps every
+#: existing call site byte-unchanged (see
+#: ``test_4691_phase_b_group_construction.py``'s own ``_ROUND`` for the
+#: identical convention).
+_ROUND = 1
+
 
 def _parent_row(
-    call_id: str, *, text: str = "", dispatched_tool_calls: "bool | int" = 2,
+    call_id: str, *, chain_id: str = "chain-test", text: str = "",
+    dispatched_tool_calls: "bool | int" = 2,
 ) -> OutboxMessage:
     """A completion Group's own placeholder row — the SAME shape
     ``test_4691_phase_b_group_construction.py``'s own ``_parent_row`` uses,
@@ -71,14 +80,26 @@ def _parent_row(
     ``test_4691_phase_b_group_construction.py``), so they need a
     declared count that still folds by default to keep exercising the
     SAME collapsed-parent-hides-its-subtree traversal shape they always
-    have."""
+    have.
+
+    #6198: ``round_index`` (:data:`_ROUND`) joins ``chain_id`` as the
+    actual Group-parent key now — ``call_id`` stays on ``meta``
+    (provider tracking) only. ``chain_id`` DEFAULTS to the file's usual
+    single-turn fixture value but is now an explicit parameter: a
+    multi-turn test (turn A then turn B) MUST pass each completion's
+    own real ``chain_id`` (``_open_turn``'s own value) — two completions
+    sharing the fixture's default would otherwise collide on the SAME
+    round key across UNRELATED turns, a fixture bug this key shape
+    would have masked under the old call_id-only key (different
+    call_ids never collided) but not under this one."""
     return OutboxMessage(
         kind="agent",
         text=text,
         meta={
-            "chain_id": "chain-test",
+            "chain_id": chain_id,
             "source": "router_tool_turn_text",
             "call_id": call_id,
+            "round_index": _ROUND,
             "finish_reason": "tool_calls" if dispatched_tool_calls else "stop",
             "dispatched_tool_calls": dispatched_tool_calls,
             "prompt_tokens": 100,
@@ -87,37 +108,62 @@ def _parent_row(
     )
 
 
-def _started(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMessage:
+def _started(
+    op_id: str, call_id: "str | None", tool: str = "grep",
+    *, chain_id: "str | None" = "chain-test",
+) -> OutboxMessage:
     # #6213: `dispatch_id` (reusing this fixture's own `op_id` param as
     # its value — every existing call site stays unchanged) is what
     # actually correlates a started row to its completion now; `call_id`
     # is UNCHANGED as the row's own parent (outbox.py's own
     # _derive_id_and_parent_id: parent_id stays "call:{call_id}" for a
     # tool_call_started row even with dispatch_id present).
+    # #6198: chain_id/round_index (chain_id NOW an explicit param, same
+    # reasoning as _parent_row's own — this file's multi-turn tests
+    # must pass the REAL chain_id, never the "chain-test" default,
+    # or a tool row silently matches the wrong turn's parent) is what
+    # actually matches the Group parent now — see _parent_row's own
+    # docstring. `round_index` still derives from whether `call_id` is
+    # `None` (this file's only two cases for THAT axis).
     return OutboxMessage(
         kind="tool_call_started",
         text=tool,
-        meta={"tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {}, "call_id": call_id},
+        meta={
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {},
+            "call_id": call_id,
+            "chain_id": chain_id if call_id is not None else None,
+            "round_index": _ROUND if call_id is not None else None,
+        },
     )
 
 
-def _completed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMessage:
+def _completed(
+    op_id: str, call_id: "str | None", tool: str = "grep",
+    *, chain_id: "str | None" = "chain-test",
+) -> OutboxMessage:
     return OutboxMessage(
         kind="tool_call_completed",
         text="",
         meta={
             "tool": tool, "op_id": op_id, "dispatch_id": op_id, "call_id": call_id,
+            "chain_id": chain_id if call_id is not None else None,
+            "round_index": _ROUND if call_id is not None else None,
             "result": {"op": tool, "count": 3},
         },
     )
 
 
-def _failed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMessage:
+def _failed(
+    op_id: str, call_id: "str | None", tool: str = "grep",
+    *, chain_id: "str | None" = "chain-test",
+) -> OutboxMessage:
     return OutboxMessage(
         kind="tool_call_failed",
         text=tool,
         meta={
             "tool": tool, "op_id": op_id, "dispatch_id": op_id, "call_id": call_id,
+            "chain_id": chain_id if call_id is not None else None,
+            "round_index": _ROUND if call_id is not None else None,
             "error_kind": "Boom", "error_message": "it broke",
         },
     )
@@ -402,13 +448,13 @@ async def test_a_new_turn_never_nests_under_the_previous_turns_parent() -> None:
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await _open_turn(transport, pilot, chain_id="chain-A", text="turn A")
-        await transport.push_display(_parent_row("resp-A"))
+        await transport.push_display(_parent_row("resp-A", chain_id="chain-A"))
         await pilot.pause()
         await transport.push_event(_turn_settled())
         await pilot.pause()
 
         await _open_turn(transport, pilot, chain_id="chain-B", text="turn B", seq_base=10)
-        await transport.push_display(_parent_row("resp-B"))
+        await transport.push_display(_parent_row("resp-B", chain_id="chain-B"))
         await pilot.pause()
 
         user_a, completion_a, user_b, completion_b = _entries(app)
@@ -643,8 +689,6 @@ async def test_a_streamed_tool_round_becomes_a_valid_call_level_group_parent() -
     row — proving :meth:`_register_call_parent` now runs from the
     streaming-settle leg too, once the terminal frame's real call_id is
     known."""
-    from dataclasses import replace as _replace
-
     from reyn.schemas.models import Event as _Event
 
     transport = QueueTransport()
@@ -657,13 +701,15 @@ async def test_a_streamed_tool_round_becomes_a_valid_call_level_group_parent() -
             _Event(type="agent_delta", data={"text": "let me check", "chain_id": "chain-A"})
         )
         await pilot.pause()
-        completion = _parent_row("resp-1", text="let me check", dispatched_tool_calls=2)
-        completion = _replace(
-            completion, meta={**completion.meta, "chain_id": "chain-A"}
+        # #6198: chain_id="chain-A" is now a direct _parent_row param —
+        # the former dataclasses.replace() post-hoc override is gone.
+        completion = _parent_row(
+            "resp-1", chain_id="chain-A", text="let me check",
+            dispatched_tool_calls=2,
         )
         await transport.push_display(completion)
         await pilot.pause()
-        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await transport.push_display(_started("op-1", call_id="resp-1", chain_id="chain-A"))
         await pilot.pause()
 
         user_row, completion_row = _entries(app)

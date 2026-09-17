@@ -67,11 +67,14 @@ def test_call_owning_agent_row_nests_under_its_own_turn():
 
 
 def test_agent_row_without_call_id_declares_no_id_never_an_empty_string():
-    """Tier 1: #6184 dispatch ③ — the SAME judgment
-    _register_call_parent's own ``if kind != "agent" or not call_id:
-    return`` already makes: an agent row with no call_id owns no
-    call-level group. Witnesses that this is None, never a fabricated
-    "" (the shared-empty-key hazard _response_call_id's own docstring
+    """Tier 1: #6184 dispatch ③ — the SAME no-key-when-absent judgment
+    ``_register_call_parent``'s own guard makes (app.py; #6198 moved
+    that guard's own key from ``call_id`` to a ``chain_id``/
+    ``round_index`` composite, but the SHAPE of the judgment —
+    ``if kind != "agent" or not <key>: return`` — is unchanged): an
+    agent row with no derivable key owns no call-level group either.
+    Witnesses that THIS module's own id is None, never a fabricated ""
+    (the shared-empty-key hazard _response_call_id's own docstring
     warns against)."""
     msg = OutboxMessage(kind="agent", text="hi", meta={"chain_id": "t1"})
     assert msg.id is None

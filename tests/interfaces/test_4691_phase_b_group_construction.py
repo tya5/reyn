@@ -39,6 +39,12 @@ from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
+#: The single round every ``_parent_row``/tool-row fixture in this file
+#: correlates through (#6198) — this file never distinguishes two
+#: DIFFERENT rounds, only "has a call_id"/"doesn't", so one shared
+#: constant keeps every existing call site below byte-unchanged.
+_ROUND = 1
+
 
 def _parent_row(
     call_id: str,
@@ -62,7 +68,14 @@ def _parent_row(
     fold only when the DECLARED count is >= 2 — a bare ``True``, ``== 1``,
     no longer folds by default; see ``test_a_group_declaring_exactly_1_
     tool_call_does_not_start_collapsed`` for that boundary case, added in
-    the same stage)."""
+    the same stage).
+
+    #6198: ``round_index`` (:data:`_ROUND`) joins ``chain_id`` as the
+    Group-parent KEY now — ``call_id`` stays on ``meta`` (provider
+    tracking) but is no longer what a tool row's own ``call_id`` matches
+    against; every ``_started``/``_completed``/``_failed`` call below
+    derives the SAME :data:`_ROUND` whenever it carries a non-``None``
+    ``call_id``, so this file's existing call sites need no change."""
     return OutboxMessage(
         kind="agent",
         text=text,
@@ -70,6 +83,7 @@ def _parent_row(
             "chain_id": "chain-test",
             "source": "router_tool_turn_text",
             "call_id": call_id,
+            "round_index": _ROUND,
             "finish_reason": finish_reason,
             "dispatched_tool_calls": dispatched_tool_calls,
             "prompt_tokens": 100,
@@ -82,11 +96,21 @@ def _started(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMes
     # #6213: `dispatch_id` (reusing this fixture's own `op_id` param as
     # its value — every existing call site stays unchanged) is what
     # actually correlates a started row to its completion now; `call_id`
-    # is UNCHANGED as the row's own parent.
+    # is UNCHANGED as the row's own parent tracking field.
+    # #6198: the ACTUAL Group-parent match is now (chain_id, round_index)
+    # — derived from whether `call_id` is `None` here (this file's own
+    # two cases: a real call_id always means "the SAME round `_parent_
+    # row` above registered"; `None` means "no correlation at all",
+    # preserved exactly, never landing on :data:`_ROUND` by accident).
     return OutboxMessage(
         kind="tool_call_started",
         text=tool,
-        meta={"tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {}, "call_id": call_id},
+        meta={
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {},
+            "call_id": call_id,
+            "chain_id": "chain-test" if call_id is not None else None,
+            "round_index": _ROUND if call_id is not None else None,
+        },
     )
 
 
@@ -96,6 +120,8 @@ def _completed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxM
         text="",
         meta={
             "tool": tool, "op_id": op_id, "dispatch_id": op_id, "call_id": call_id,
+            "chain_id": "chain-test" if call_id is not None else None,
+            "round_index": _ROUND if call_id is not None else None,
             "result": {"op": tool, "count": 3},
         },
     )
@@ -107,6 +133,8 @@ def _failed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMess
         text=tool,
         meta={
             "tool": tool, "op_id": op_id, "dispatch_id": op_id, "call_id": call_id,
+            "chain_id": "chain-test" if call_id is not None else None,
+            "round_index": _ROUND if call_id is not None else None,
             "error_kind": "Boom", "error_message": "it broke",
         },
     )
