@@ -23,6 +23,15 @@ than "is some entry open" alone (a genuinely NEW episode's own entry
 creation is what actually retires the old reference — see
 ``_ensure_compaction_progress_entry``'s own updated idempotency guard).
 
+#6186: the identity check itself moved onto the shared `id`/`parent_id`
+vocabulary (``outbox.py``'s own ``_derive_id_and_parent_id``, the
+`episode:` namespace) — this file's own tests below still arrange scenes
+by setting ``compaction_episode_seq`` (the INPUT that vocabulary derives
+from), so they stay unchanged; only ``_ingest_frame``'s own comparison
+(``msg.parent_id == entry.item.id``) moved, not what these tests build
+or assert on. See ``tests/runtime/test_6186_derive_id_compaction.py``
+for the derivation's own unit-level coverage.
+
 Real ``Session``/``AgentRegistry``/``EventLog`` throughout. Driving via a
 direct ``session._audit_events.emit(...)`` call for
 ``compaction_shrink_recovered``/``llm_request`` is the same legitimate
