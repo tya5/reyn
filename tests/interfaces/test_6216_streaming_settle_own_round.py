@@ -30,7 +30,7 @@ in-progress text with the EARLIER round's completion text.
    `session.py`'s own 2 router-cap force-close sites, verified their
    own real value: `_temp_loop._delta_round_index`, always 0 since
    that fresh RouterLoop's main loop never ran — see
-   `tests/runtime/test_router_cap_exhausted.py` and siblings for that
+   `tests/runtime/test_limit_deny_force_close_router_cap_1496.py` and siblings for that
    half; this file covers the CONSUMER half only, using synthetic
    round_index-bearing frames matching the shape #6218 already
    verified real producers emit).
