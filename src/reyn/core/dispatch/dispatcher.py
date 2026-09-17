@@ -323,6 +323,16 @@ async def dispatch_tool(
     # key, never a value substitute for it — see _redact_content_fields'
     # own docstring for why redaction must not perturb it).
     args_hash = _compute_args_hash(args)
+    # #6213: reyn's OWN correlation id for THIS dispatch — see
+    # new_dispatch_id's own docstring for why this exists ALONGSIDE
+    # args_hash (a content fingerprint, collides by design) and
+    # ctx.tool_call_id (a THIRD PARTY's id, #5891's own, untouched —
+    # co-exists for its own history-join purpose, not a correlation
+    # key here). Minted ONCE, in this one scope, so all 3 events below
+    # (tool_called / tool_failed / tool_returned) carry the SAME value
+    # for the SAME dispatch — no branch, no fallback: every dispatch
+    # gets one, unconditionally.
+    dispatch_id = new_dispatch_id()
 
     # 4. Pre-event: record the tool call.
     ctx.events.emit(
@@ -334,6 +344,7 @@ async def dispatch_tool(
         call_id=ctx.call_id,
         args=_redact_content_fields(name, args, ctx),
         args_hash=args_hash,
+        dispatch_id=dispatch_id,
     )
 
     # 5. Invoke (with structured error handling)
@@ -349,6 +360,7 @@ async def dispatch_tool(
             chain_id=ctx.chain_id,
             call_id=ctx.call_id,
             args_hash=args_hash,
+            dispatch_id=dispatch_id,
             error_kind="permission_denied",
             message=enriched,
         )
@@ -363,6 +375,7 @@ async def dispatch_tool(
             chain_id=ctx.chain_id,
             call_id=ctx.call_id,
             args_hash=args_hash,
+            dispatch_id=dispatch_id,
             error_kind="exception",
             message=f"{type(e).__name__}: {e}",
         )
@@ -387,6 +400,7 @@ async def dispatch_tool(
                 chain_id=ctx.chain_id,
                 call_id=ctx.call_id,
                 args_hash=args_hash,
+                dispatch_id=dispatch_id,
                 error_kind=_err_kind,
                 message=_err_message,
             )
@@ -421,6 +435,7 @@ async def dispatch_tool(
         chain_id=ctx.chain_id,
         call_id=ctx.call_id,
         args_hash=args_hash,
+        dispatch_id=dispatch_id,
         result=_redact_content_fields(name, result, ctx),
         tool_call_id=ctx.tool_call_id,
     )
@@ -511,6 +526,28 @@ def _handler_declared_error(result: dict) -> "tuple[str, str] | None":
     if error_kind:
         return str(error_kind), f"error: {error_kind}"
     return None
+
+
+def new_dispatch_id() -> str:
+    """Mint a fresh, reyn-own correlation id for ONE ``dispatch_tool`` call
+    — #6213. Every call to this function is a distinct dispatch; unlike
+    ``args_hash`` (a CONTENT fingerprint that collides BY DESIGN when the
+    same tool is called with the same args) and ``ctx.tool_call_id`` (a
+    THIRD PARTY's id — litellm's own ``tc["id"]``, #5891's own field, a
+    DIFFERENT consumer's key for a DIFFERENT purpose — history-row join,
+    left untouched here, co-existing), this value's own uniqueness is
+    reyn's to assert: minted once, in ``dispatch_tool``'s own scope, and
+    carried on all 3 of that call's own events (``tool_called`` /
+    ``tool_failed`` / ``tool_returned``) — never re-derived per event.
+
+    Same minting convention ``session_pure.py``'s own ``new_chain_id()``
+    established ("every chain_id minted anywhere in the runtime goes
+    through this function" — lead-coder ruling, #6213: "発番規則は1箇所"
+    applies per ID KIND, not globally; this is a DIFFERENT id kind
+    [per-dispatch, not per-conversation], so it gets its own single
+    minting point here rather than reusing that unrelated one)."""
+    import uuid
+    return uuid.uuid4().hex
 
 
 def _compute_args_hash(args: dict) -> str:

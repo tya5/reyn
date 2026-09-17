@@ -1467,9 +1467,13 @@ class TextualChatApp(App):
                 getattr(getattr(config, "chat", None), "neutralize_body", False)
             ),
         )
-        # Running tool-call entries keyed by op_id (== the dispatcher's
-        # deterministic args_hash, meta["op_id"]) so a later completion/failure
-        # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
+        # Running tool-call entries keyed by msg.id (== "tool:{dispatch_id}",
+        # dispatcher.py's own new_dispatch_id() minted fresh per call --
+        # #6213, was op_id/args_hash, a CONTENT fingerprint that collided
+        # BY DESIGN when the same tool was called with the same args
+        # twice, settling the wrong row) so a later completion/failure
+        # frame (matched by ITS OWN parent_id against this id) transitions
+        # the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
         # #4691 Phase B B1: the litellm-call TREE PARENT for a given call_id
         # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying a
@@ -5629,12 +5633,13 @@ class TextualChatApp(App):
         :attr:`_current_turn_parent` — every other call site already
         ignored the old ``None`` return, so widening it costs nothing there.
 
-        A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``op_id``
-        matches a tracked RUNNING tool does NOT append a second row: it SETTLES the
-        started entry in place (:meth:`_coalesce_tool_result` — stop the ② live
-        spinner, fold the ``⎿ result`` into the same entry, go SUCCESS/ERROR), so a
-        call and its result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``,
-        the PoC's ``_present_tool_call`` grouping). A ``kind="agent"`` completion
+        A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``parent_id``
+        (``tool:{dispatch_id}`` — #6213) matches a tracked RUNNING tool's own
+        ``id`` does NOT append a second row: it SETTLES the started entry in place
+        (:meth:`_coalesce_tool_result` — stop the ② live spinner, fold the
+        ``⎿ result`` into the same entry, go SUCCESS/ERROR), so a call and its
+        result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``, the PoC's
+        ``_present_tool_call`` grouping). A ``kind="agent"`` completion
         whose ``meta["chain_id"]`` matches an in-flight streamed reply
         (:attr:`_streaming_replies`, #3288 ③c) does not append a second entry
         either: it FINALIZES the same entry the deltas coalesced into, with the
@@ -5713,9 +5718,15 @@ class TextualChatApp(App):
             and entry.item.meta.get("compaction_episode_seq") == meta.get("compaction_episode_seq")
         ):
             return
-        op_id = meta.get("op_id")
-        if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
-            started = self._running_tools.pop(op_id, None)
+        # #6213: keyed by msg.parent_id (== "tool:{dispatch_id}",
+        # outbox.py's own _derive_id_and_parent_id) — not the old
+        # op_id/args_hash meta field (a content fingerprint that
+        # collides BY DESIGN when the same tool is called with the same
+        # args twice; see _apply_lifecycle_state's own comment for the
+        # full account).
+        settle_key = msg.parent_id
+        if kind in ("tool_call_completed", "tool_call_failed") and settle_key is not None:
+            started = self._running_tools.pop(settle_key, None)
             if started is not None:
                 self._coalesce_tool_result(started, msg)
                 return
@@ -5843,24 +5854,80 @@ class TextualChatApp(App):
         """Drive the Phase-2 lifecycle state + Phase-② live body of a NEWLY appended
         row (the non-coalesced path).
 
-        A ``tool_call_started`` row (with an ``op_id`` correlation key) becomes
-        RUNNING (its gutter blinks amber off the native animation clock) AND grows
-        a LIVE body — a spinner + app-computed ``elapsed Ns`` — driven by
-        :meth:`_begin_running_indicator`; its matching completion later coalesces
-        into it (:meth:`_ingest_frame`). An UNCORRELATED ``tool_call_failed`` (no
-        tracked started) or an ``error`` row goes straight to ERROR (coral gutter +
-        tint). Frames without an ``op_id`` carry no state (DEFAULT) — they append
-        exactly as in Phase 1, so the plain-fallback turn sequence is unchanged.
+        A ``tool_call_started`` row (with an ``id`` correlation key,
+        ``tool:{dispatch_id}`` — #6213) becomes RUNNING (its gutter blinks
+        amber off the native animation clock) AND grows a LIVE body — a
+        spinner + app-computed ``elapsed Ns`` — driven by
+        :meth:`_begin_running_indicator`; its matching completion later
+        coalesces into it (:meth:`_ingest_frame`, matched by THAT frame's
+        own ``parent_id`` against THIS row's ``id`` — the same nested
+        ``id``/``parent_id`` vocabulary #6184 established, not a second
+        one). An UNCORRELATED ``tool_call_failed`` (no tracked started) or
+        an ``error`` row goes straight to ERROR (coral gutter + tint).
+        Frames without an ``id`` carry no state (DEFAULT) — they append
+        exactly as in Phase 1, so the plain-fallback turn sequence is
+        unchanged.
 
-        ``_running_tools`` keys the RUNNING entry by ``op_id`` for the settle: it is
-        the handle the completion frame coalesces + stops the animation on. The
-        gutter blink itself is time-based in :class:`ReynGutter`, driven by the
-        native animation tick."""
+        ``_running_tools`` keys the RUNNING entry by ``msg.id`` for the
+        settle: it is the handle the completion frame coalesces + stops
+        the animation on. #6213 (lead-coder, measured): this dict is its
+        OWN index, not a merge into some other id/parent_id-keyed lookup
+        — none exists yet anywhere in this module (a grep-confirmed
+        population of zero other ``.id``/``.parent_id`` readers before
+        this fix); `_running_tools` is the FIRST real consumer of the
+        vocabulary #6184 built. The gutter blink itself is time-based in
+        :class:`ReynGutter`, driven by the native animation tick.
+
+        🔴 DISCLOSED RESIDUAL (#6213, lead-coder BLOCKING ⑵ — "no silent
+        degrade"): a ``tool_call_*`` frame with NO ``dispatch_id`` at all
+        gets ``id``/``parent_id`` of ``None`` (:func:`~reyn.runtime.
+        outbox._derive_id_and_parent_id`'s own unmodified fallback), so
+        it appends as a plain DEFAULT-state row that never becomes
+        RUNNING and never coalesces with anything — no crash, but the
+        live-indicator + settle-into-one-block UX this method exists for
+        is silently absent for that ONE frame. 3 named populations
+        checked (measured against THIS PR's own diff, not "probably"):
+
+        ① in-process real dispatches — EMPTY. ``dispatch_tool``
+           (dispatcher.py) mints ``dispatch_id`` UNCONDITIONALLY now, and
+           ``lifecycle_forwarder.py``'s ``_enqueue_tool_call`` is the
+           ONLY in-process producer of these 3 kinds (grep-confirmed,
+           ``src/reyn/``) — every real call is behind that one path.
+        ② the restore-on-restart projection (``restore.py``) — EMPTY,
+           structurally, not by luck: it never goes through THIS method
+           at all. ``restore.project_restored_frames`` only ever emits
+           ``kind="tool_call_started"`` (a result is folded into that
+           SAME frame's own meta, ``RESULT_KIND_KEY``/``RESULT_META_KEY``
+           — its own docstring: "Coalesced, resolved, never RUNNING"),
+           and the app appends restored frames via
+           ``self.conversation.extend`` + ``_apply_restored_state``
+           (app.py's own restore call site) — a SEPARATE append path
+           that never calls :meth:`_apply_lifecycle_state` or touches
+           ``_running_tools`` at all, before or after this fix.
+        ③ wire version skew — NOT EMPTY, cannot be closed here. reyn
+           sessions are long-running and support LATER attach (a fresh
+           client connecting to an already-running session process); a
+           session process still running code from before this PR lands
+           would still emit the pre-#6213 ``op_id``-only shape to ANY
+           client that attaches to it, new or old (the SERVER side
+           constructs the frame; ``from_wire`` on the client only
+           decodes it verbatim, #6184's own established contract). This
+           is the ONE real, non-empty population. NOT fixed by re-adding
+           an ``op_id`` fallback here — that would reproduce the exact
+           rejected design (#6213's own ruling: keying by anything that
+           falls back to a content fingerprint "leaves that population's
+           defect unchanged AND unnoticed"); a skewed old server's row
+           simply degrades to "two independent, uncorrelated rows" here,
+           same as ANY other unrecognised-shape frame this method's own
+           "Frames without an id carry no state" sentence above already
+           documents as the general contract. Closes on its own the
+           moment every attached session's own process has restarted
+           past this PR landing — no code change removes it sooner."""
         kind = msg.kind
-        op_id = (msg.meta or {}).get("op_id")
-        if kind == "tool_call_started" and op_id is not None:
+        running_key = msg.id
+        if kind == "tool_call_started" and running_key is not None:
             entry.set_state(EntryState.RUNNING)
-            self._running_tools[op_id] = entry
+            self._running_tools[running_key] = entry
             self._begin_running_indicator(entry)
             # #3693: name the tool on the live-turn row, but only from a label
             # the frame actually carries — an unlabelled call stays the generic

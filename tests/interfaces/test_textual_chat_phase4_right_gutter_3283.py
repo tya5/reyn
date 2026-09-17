@@ -92,7 +92,10 @@ def _completed(op_id: str, tool: str = "grep") -> OutboxMessage:
     return OutboxMessage(
         kind="tool_call_completed",
         text="",
-        meta={"tool": tool, "op_id": op_id, "result": {"op": tool, "count": 3}},
+        meta={
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id,
+            "result": {"op": tool, "count": 3},
+        },
     )
 
 

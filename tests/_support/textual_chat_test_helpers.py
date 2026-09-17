@@ -20,8 +20,15 @@ from reyn.runtime.outbox import OutboxMessage
 
 
 def started(op_id: str, tool: str = "grep") -> OutboxMessage:
+    # #6213: `dispatch_id` (reusing this fixture's own `op_id` param as
+    # its value — every existing call site across this shared helper's
+    # consumers stays unchanged) is what actually correlates a started
+    # row to its completion now (outbox.py's own
+    # _derive_id_and_parent_id turns it into id="tool:{dispatch_id}").
     return OutboxMessage(
-        kind="tool_call_started", text=tool, meta={"tool": tool, "op_id": op_id, "args": {}}
+        kind="tool_call_started",
+        text=tool,
+        meta={"tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {}},
     )
 
 

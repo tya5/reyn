@@ -116,8 +116,16 @@ class ScriptedTransport(ClientTransportStub):
 
 
 def _started(op_id: str, tool: str = "grep") -> OutboxMessage:
+    # #6213: `dispatch_id` (not `op_id`) is what actually correlates a
+    # started row to its completion now (outbox.py's own
+    # _derive_id_and_parent_id turns it into id="tool:{dispatch_id}") —
+    # reusing this fixture's own `op_id` param as the dispatch_id value
+    # too keeps every EXISTING call site in this file (`_started("op-x")`
+    # etc.) unchanged while still producing a real, correlating id.
     return OutboxMessage(
-        kind="tool_call_started", text=tool, meta={"tool": tool, "op_id": op_id, "args": {}}
+        kind="tool_call_started",
+        text=tool,
+        meta={"tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {}},
     )
 
 
@@ -125,7 +133,10 @@ def _completed(op_id: str, tool: str = "grep", result=None) -> OutboxMessage:
     return OutboxMessage(
         kind="tool_call_completed",
         text="",
-        meta={"tool": tool, "op_id": op_id, "result": result or {"op": tool, "count": 3}},
+        meta={
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id,
+            "result": result or {"op": tool, "count": 3},
+        },
     )
 
 
@@ -133,7 +144,10 @@ def _failed(op_id: str, tool: str = "grep") -> OutboxMessage:
     return OutboxMessage(
         kind="tool_call_failed",
         text=tool,
-        meta={"tool": tool, "op_id": op_id, "error_kind": "Boom", "error_message": "it broke"},
+        meta={
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id,
+            "error_kind": "Boom", "error_message": "it broke",
+        },
     )
 
 

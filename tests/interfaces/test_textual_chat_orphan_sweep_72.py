@@ -53,8 +53,13 @@ from reyn.schemas.models import Event
 
 
 def _started(op_id: str, tool: str = "grep") -> OutboxMessage:
+    # #6213: `dispatch_id` (reusing this fixture's own `op_id` param as
+    # its value) is what actually correlates a started row to its
+    # completion now.
     return OutboxMessage(
-        kind="tool_call_started", text=tool, meta={"tool": tool, "op_id": op_id, "args": {}}
+        kind="tool_call_started",
+        text=tool,
+        meta={"tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {}},
     )
 
 
@@ -62,7 +67,10 @@ def _completed(op_id: str, tool: str = "grep") -> OutboxMessage:
     return OutboxMessage(
         kind="tool_call_completed",
         text="",
-        meta={"tool": tool, "op_id": op_id, "result": {"op": tool, "count": 3}},
+        meta={
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id,
+            "result": {"op": tool, "count": 3},
+        },
     )
 
 
