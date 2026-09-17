@@ -5708,12 +5708,31 @@ class TextualChatApp(App):
         ``call_id`` (litellm's, borrowed) to :func:`_call_parent_key`'s
         composite (reyn's own) — this method's own parameter/field name
         stayed ``call_id`` for zero churn to its existing direct unit
-        tests, but it is now a GENERAL borrowed/reused-key witness, not
-        specific to ``_call_parents`` — lead-coder's own framing: "検出器
-        は`_call_parents`専用でなく借り物の鍵一般の番人". Silence here
-        after this fix is the WITNESS that the new key does not collide
-        for a real round (see :func:`_call_parent_key`'s own disclosed
-        scope), never proof this detector stopped mattering.
+        tests. #6221: this detector's OWN reason for existing is no
+        longer "the key is a third party's" — ``turn:{chain_id}/round:
+        {round_index}`` is reyn's own value now, not borrowed. ⚠️ Do NOT
+        read that as "the key became ⑴ (own, unique per issuance) ∴ this
+        detector is vacuous" — that conflates two DIFFERENT rungs of the
+        arc's own 4-way key-origin classification (architect ruling,
+        #6198/#6213/#6221): ⑴ own + unique per issuance (no detector
+        needed) / ⑵ own + collides BY DESIGN (never used as a key) / ⑶
+        a third party's (detector needed — the ORIGINAL reason this
+        method existed) / ⑷ **own, but NOT necessarily unique** — an
+        ORDINAL (``round_index``) whose uniqueness holds only through an
+        internal invariant ("a reset round never emits a message" —
+        measured, #6198's own issue thread), never asserted independently.
+        `_call_parents`' key is ⑷, not ⑴: this detector stays for THAT
+        reason now, not the original ⑶ one. Its own failure mode is
+        UNCHANGED — a fired event means the ⑷ invariant broke, and THAT
+        is when this key would need minting, not before. (General form,
+        architect: 「道具（分類）は結論より長く残る ∴ 古い根拠は結論より
+        遠くまで運ばれる」— a classification handed out during one arc
+        keeps being applied by later readers even after the specific
+        conclusion that used it has moved on; the classification itself
+        must be re-checked at each new use, not just the conclusion.)
+        Silence here after this fix is the WITNESS that the new key does
+        not collide for a real round (see :func:`_call_parent_key`'s own
+        disclosed scope), never proof this detector stopped mattering.
 
         Bounded by the DISTINCT ``call_id`` value, the same
         "record every occurrence, emit only the first" shape
