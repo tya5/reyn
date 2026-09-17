@@ -44,8 +44,15 @@ A census, not a sample (matches `test_router_loop.py`'s own
 future 8th site that forgets `round_index`, derives it independently
 instead of reading the shared `_delta_round_index` counter, or joins
 the "declared absence" set without its own comment explaining why, is
-caught here rather than only showing up as a hard-to-reproduce
-streaming-settle bug.
+caught here — provided it is written as a literal `kind="agent"`
+construction in `src/`. A producer reached only through a dynamic
+forward, an adapter, or a frame built elsewhere and re-emitted is NOT
+visible to this source scan (it regexes literal source text, not
+runtime behaviour): one such forward (`router_host_adapter.py`) was
+found in this arc's own investigation
+(#6216#issuecomment-5709582350); it is a pass-through, not a producer,
+but the class exists. A new producer of that shape must be classified
+by hand.
 """
 from __future__ import annotations
 
