@@ -735,6 +735,24 @@ class InterAgentMessaging:
                     self._output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
                 )
                 user_text = msg_template.format(peer=peer, reason=reason)
+                # #6216 (lead-coder ruling, issue #6216 thread): this row
+                # deliberately carries NO round_index — not a missed
+                # site, a DECLARED ABSENCE. This message reports a PEER's
+                # failure to the user; no LLM round produced it, so
+                # there is no round to name (the same "declared absence"
+                # shape #5891's own tool_call_id=None already uses:
+                # "a real id, or None for a caller with no real ...
+                # entry behind this dispatch at all"). Writing
+                # round_index=0 here would ASSERT a fact that is not
+                # true ("this is round 0") when the truth is "there is
+                # no round" — and 0 already carries the meaning "not a
+                # real round" (#6218), so the consumer side behaves
+                # identically whether this key is present-as-0 or
+                # absent; asserting nothing is the more honest choice.
+                # #6218's own "carrying call_id without round_index
+                # silently drops Group-parent registration" warning does
+                # NOT apply here — this row carries no call_id either,
+                # so `_call_parent_key` already returns None regardless.
                 await self._put_outbox(OutboxMessage(
                     kind="agent",
                     text=user_text,

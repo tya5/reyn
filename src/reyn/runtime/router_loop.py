@@ -3230,7 +3230,20 @@ class RouterLoop:
                     kind="agent",
                     text=_structured_text,
                     persist_as="assistant",
-                    meta={"chain_id": self.chain_id, "reasoning": result.reasoning},
+                    meta={
+                        "chain_id": self.chain_id,
+                        "reasoning": result.reasoning,
+                        # #6216: this terminal reply carries no call_id
+                        # (a structured-format answer dispatches no
+                        # tools, #6198's own scope), but it IS a real
+                        # completion that can settle an in-progress
+                        # streamed reply for THIS round — the streaming-
+                        # settle consumer needs round_index regardless
+                        # of call_id (see app.py's own _pop_streaming_
+                        # round docstring: keyed on (chain_id,
+                        # round_index) alone).
+                        "round_index": self._delta_round_index,
+                    },
                 )
                 return self._total_usage
             await self.host.put_outbox(
@@ -3418,6 +3431,14 @@ class RouterLoop:
                         "chain_id": self.chain_id,
                         "limit_stopped": True,
                         "limit_kind": "max_iterations",
+                        # #6216: same reasoning as the structured-answer
+                        # terminal reply above — a real completion that
+                        # can settle an in-progress streamed reply,
+                        # regardless of carrying no call_id. self, not a
+                        # throwaway RouterLoop (unlike session.py's own
+                        # router_cap wrap-up) — this genuinely reflects
+                        # the last real round this turn reached.
+                        "round_index": self._delta_round_index,
                     },
                 )
                 return self._total_usage

@@ -5913,10 +5913,17 @@ class TextualChatApp(App):
             # ``recent_replies.appendleft(msg.text)`` on the same kind.
             self._recent_replies.appendleft(msg.text)
             chain_id = meta.get("chain_id")
-            # The completion carries no round, so it settles the LAST round of
-            # this chain — the one whose text it holds. Any earlier round is
-            # already complete on screen and only needs releasing.
-            streaming = self._pop_last_streaming_round(chain_id) if chain_id else None
+            # #6216: the completion now carries its OWN round (#6218
+            # threaded ``round_index`` onto every kind="agent" emit site
+            # already) — settle THAT round, never "whichever is open the
+            # longest" or "the highest index seen so far". See
+            # :meth:`_pop_streaming_round`'s own docstring for the
+            # regression this replaces and why 0/absent degrades safely.
+            round_index = meta.get("round_index", 0)
+            streaming = (
+                self._pop_streaming_round(chain_id, round_index)
+                if chain_id else None
+            )
             if streaming is not None:
                 # Release the ③ visibility tracker BEFORE the final write: the
                 # record is already out of the map, so no callback could find it
@@ -6440,24 +6447,50 @@ class TextualChatApp(App):
             if record is not None:
                 record.release()
 
-    def _pop_last_streaming_round(self, chain_id: str) -> "_StreamingReply | None":
-        """Pop the highest-round record for *chain_id*, releasing any others.
+    def _pop_streaming_round(
+        self, chain_id: str, round_index: int
+    ) -> "_StreamingReply | None":
+        """Pop the record for *(chain_id, round_index)* — the completion
+        frame's OWN round — releasing any OTHER open record for
+        *chain_id*.
 
-        Returns the record the completion frame should settle. Earlier rounds
-        are released rather than settled: the completion's authoritative text is
-        the LAST message of the turn, so writing it into an earlier entry would
-        replace that round's own words with a later round's.
+        #6216 (lead-coder, measured): this used to pick the HIGHEST
+        round_index for *chain_id* (``max(keys, key=lambda k: k[1])``),
+        because the completion frame carried no round of its own — the
+        consumer had to RECONSTRUCT which round a completion belonged
+        to from an invariant ("the completion is always the LAST
+        message of the turn") that is true only while every producer
+        agrees, never asserted BY a producer (`dispatcher.py`'s own
+        "not an invariant to key UI structure on", owner ruling B,
+        #4691/#6186). #6218 already threads ``round_index`` onto every
+        ``kind="agent"`` `put_outbox` call's own meta (for
+        ``_call_parent_key``'s sake) — this method now reads that SAME
+        fact instead of re-deriving one.
+
+        ``round_index`` absent/``0`` (an older producer, a wire-skew
+        peer, or `session.py`'s own router-cap force-close reply —
+        never inside a real streaming round) never matches any real
+        open key (real rounds start at ``1`` — the same "0/absent both
+        falsy, never a real round" convention
+        :meth:`_handle_agent_delta_event`/:func:`_call_parent_key`
+        already established for this exact field) — the SAME degrade
+        #6214 chose for its own round-identity gap: no fallback added
+        here, the caller's own existing "no streaming record found →
+        append as an ordinary new row" path already covers it, and nothing new needs to.
+
+        Every OTHER still-open round for *chain_id* is released, not
+        settled, whether earlier OR (should it ever occur) later than
+        *round_index* — its own completion's authoritative text belongs
+        in ITS OWN round, never borrowed into a different one.
         """
         keys = [key for key in self._streaming_replies if key[0] == chain_id]
-        if not keys:
-            return None
-        last = max(keys, key=lambda k: k[1])
+        target = (chain_id, round_index)
         for key in keys:
-            if key != last:
+            if key != target:
                 record = self._streaming_replies.pop(key, None)
                 if record is not None:
                     record.release()
-        return self._streaming_replies.pop(last, None)
+        return self._streaming_replies.pop(target, None)
 
     def _sweep_orphaned_streaming_replies(self) -> None:
         """Release any streamed reply still marked in-flight at a TURN BOUNDARY.

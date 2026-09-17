@@ -10768,6 +10768,19 @@ class Session:
                     "chain_id": chain_id,
                     "limit_stopped": True,
                     "limit_kind": "router_cap",
+                    # #6216: every kind="agent" producer carries round_index
+                    # from the SAME source, self._delta_round_index (#6218's
+                    # own ruling for _call_parent_key, extended here to the
+                    # streaming-settle consumer, #6216) — genuinely 0 here,
+                    # not fabricated: _temp_loop is a FRESH RouterLoop whose
+                    # main loop (the only place that increments it) never
+                    # ran; this wrap-up is its own standalone call, never
+                    # part of any streaming round. 0 is falsy by the same
+                    # "0/absent both never a real round" convention
+                    # _pop_streaming_round already reads, so this reply
+                    # never wrongly folds into whatever round happened to
+                    # still be open.
+                    "round_index": _temp_loop._delta_round_index,
                 },
             ))
             self._append_history(ChatMessage(
@@ -10803,7 +10816,10 @@ class Session:
             _ROUTER_RETRY_EXHAUSTED_MSG["en"],
         )
         await self._put_outbox(OutboxMessage(
-            kind="agent", text=fallback, meta={"chain_id": chain_id},
+            kind="agent", text=fallback,
+            # #6216: same source, same reasoning as the wrap-up reply
+            # above — see its own comment.
+            meta={"chain_id": chain_id, "round_index": _temp_loop._delta_round_index},
         ))
         self._append_history(ChatMessage(
             role="assistant", content=fallback, ts=_now_iso(),
