@@ -64,14 +64,34 @@ independently instead" of importing ``renderer.py``'s
 ``_normalize_text``) — the same boundary, the same choice, made twice
 now for the same reason.
 
-## Subject stays UNCUT — accept ④
+## Subject is now cut too — #6208 R3, accept ④'s own withdrawal
 
-Only the ``k=v`` listing passes through the width cut below; the
-``subject`` half is placed into the final string as-is, never
-shortened. At width overflow, the trailing OPTION is what disappears,
-never the middle of the subject — the owner's own original ask (the
-executed command line as the display's CENTER) would be defeated by a
-subject that could itself be cut mid-string.
+Architect's original accept ④ ("subject stays UNCUT") is WITHDRAWN
+(issue #6208 thread, architect's own retraction, verbatim reasoning):
+its whole premise was "a subject cut mid-string would defeat the
+owner's ask for the command line as the display's CENTER" — an
+unstated premise underneath that: cutting it would have thrown the
+full text away with nowhere left to read it. #6208 R3 (the ⎿-adjacent
+call-level detail view, presenter.py's own ``_args_detail_lines``)
+removes that premise — the FULL, uncut subject is always one Space
+away — so the conclusion built on it no longer holds either
+(architect's own general form, recorded on the issue: "a conclusion
+built on a premise does not expire on its own when the premise does;
+say the premise AND its own expiry condition in the same sentence").
+
+Measured regression this closes: a real, owner-approved ``exec``
+composition (subject 66 chars alone, or the OWNER-reported real
+artifact: 247 combined chars including args) wrapped to 4-5 lines in a
+real ``TextualChatApp`` at width 80 — an overview line is no longer an
+overview once one call occupies that much scrollback. ``subject_width``
+(default matches ``value_width``: subject is now cut with the SAME
+per-value budget every other displayed value gets, no longer a
+privileged exception) closes it, verified the same way it was found —
+a real ``TextualChatApp``/``FlowView`` driven at width 80, not derived
+from the numbers alone (``textual-flowview``'s own wrap-vs-clip
+behavior is a third party's property, confirmed via that real render,
+not assumed from ``repl/renderer.py``'s own — different stack — Rich
+Console ``overflow="fold"`` choice).
 
 ## No empty parens — #6205 (a 段3-2/3-3/3-4 regression)
 
@@ -114,6 +134,7 @@ def compose_tool_head(
     surface: str = "terminal",
     value_width: int = 24,
     total_width: int = 60,
+    subject_width: int = 24,
 ) -> "tuple[str, str]":
     """Returns ``(subject_display, args_display)`` — ``args_display`` is
     the parenthesized ``"(k=v, ...)"`` string when at least one pair (or
@@ -181,6 +202,6 @@ def compose_tool_head(
 
     subject_display = ""
     if subject:
-        subject_display, _ = neutralizer.neutralize(subject)
+        subject_display, _ = neutralizer.neutralize(_cut(subject, subject_width))
 
     return subject_display, args_display

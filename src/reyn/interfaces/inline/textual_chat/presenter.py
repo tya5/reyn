@@ -418,6 +418,72 @@ def _dict_detail_lines(result: dict) -> "list[str]":
     return lines
 
 
+def _args_detail_lines(msg: "OutboxMessage") -> "list[str]":
+    """The FULL tool args (subject included) as display lines — #6208 R3:
+    "詳細の単位を呼び出しに" — a呼び出し's own detail is the FULL
+    argument text plus the full result text, not the result alone.
+
+    Reads the SAME ``composed`` :func:`_tool_head` already computes (a
+    list of ``(key, value)`` pairs, or a bare normalized string) —
+    normalized but NEVER length-cut, since :func:`~reyn.core.present.
+    tool_head.compose_tool_head`'s own cut is a viewer-summary concern,
+    not a property of the value itself. Deliberately does NOT exclude
+    the tool's own ``subject_keys`` the way the header does (accept②'s
+    own exclusion exists so the header never shows the subject's value
+    TWICE on one line) — here there is no subject line to collide
+    with, so the subject's own param (``exec``'s ``cmd``) appears in
+    this listing like any other, giving the FULL text R1 asks for
+    (owner: "コマンドとコマンドオプション") a single place to read in
+    full."""
+    meta = msg.meta or {}
+    composed = (
+        msg.details["args"] if "args" in (msg.details or {})
+        else _compose_args(meta.get("args"))
+    )
+    if isinstance(composed, list):
+        return [f"{k}={v}" for k, v in composed]
+    if composed:
+        return [str(composed)]
+    return []
+
+
+def _args_detail_block(msg: "OutboxMessage", head: Text) -> "Text | None":
+    """#6208 R3 — the expanded row's own ARGS half, alongside
+    :func:`_tool_result_line`'s existing RESULT half. Same Space toggle
+    (:data:`_EXPANDED_KEY`), same call, same unit ("呼び出し単位" —
+    architect's own design, issue #6208): a settled row's detail is now
+    the full argument text AND the full result text together, not the
+    result alone (the gap this stage closes — every other axis of the
+    detail view was already there).
+
+    ``None`` when nothing is actually being withheld — mirrors
+    :func:`_tool_result_line`'s own "only unfold when the summary is
+    actually WITHHOLDING something" guard (a short subject/args set
+    that never triggered the header's own `…` cut would otherwise
+    print the exact same text twice, the real-terminal-only symptom
+    that guard exists to prevent)."""
+    meta = msg.meta or {}
+    if not meta.get(_EXPANDED_KEY):
+        return None
+    if "…" not in head.plain:
+        return None
+    lines = _args_detail_lines(msg)
+    if not lines:
+        return None
+    body = Text("  args:", style=_CC_DIM)
+    for line in lines[:_EXPANDED_MAX_LINES]:
+        body.append("\n")
+        body.append(f"     {line}", style=_CC_DIM)
+    if len(lines) > _EXPANDED_MAX_LINES:
+        body.append("\n")
+        body.append(
+            f"     … {len(lines) - _EXPANDED_MAX_LINES} more lines"
+            " · enter to copy the whole result",
+            style=_CC_DIM,
+        )
+    return body
+
+
 def _result_detail_lines(msg: "OutboxMessage") -> "list[str]":
     """The FULL tool result as display lines — what the one-line summary drops.
 
@@ -702,6 +768,9 @@ def _body_and_background(
             # Settled (coalesced): the tool call folded together with its result.
             head = _tool_head(msg)
             result_line, background = _tool_result_line(msg)
+            arg_block = _args_detail_block(msg, head)
+            if arg_block is not None:
+                return Group(head, arg_block, result_line), background
             return Group(head, result_line), background
         return _tool_head(msg), None
     if kind == "tool_call_completed":
