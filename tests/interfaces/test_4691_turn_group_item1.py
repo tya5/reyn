@@ -651,8 +651,18 @@ async def test_a_streamed_terminal_reply_nests_under_its_turns_user_row() -> Non
         # chain_id (matching production: the correlating id
         # ``_emit_agent_delta`` stamps IS the round's own chain_id, the
         # same one the terminal completion frame's meta carries).
+        # #6219: real producers always stamp round_index on an agent_delta
+        # (RouterLoop._emit_agent_delta) — this fixture predates that PR
+        # and pushed a bare delta with none. #6219's exact-round
+        # ``_pop_streaming_round`` now keys off that field, so an absent
+        # one (falls back to 0) no longer matches the completion's real
+        # round (round 1, from ``_parent_row``'s own ``_ROUND``) and the
+        # settle misses — bring the fixture up to the real shape.
         await transport.push_event(
-            _Event(type="agent_delta", data={"text": "done", "chain_id": "chain-A"})
+            _Event(
+                type="agent_delta",
+                data={"text": "done", "chain_id": "chain-A", "round_index": _ROUND},
+            )
         )
         await pilot.pause()
         completion = _parent_row("resp-1", text="done", dispatched_tool_calls=False)
@@ -697,8 +707,18 @@ async def test_a_streamed_tool_round_becomes_a_valid_call_level_group_parent() -
         await pilot.pause()
         await _open_turn(transport, pilot, chain_id="chain-A")
 
+        # #6219: same fixture staleness as the sibling test above — a
+        # real agent_delta always carries round_index; stamp it here too
+        # so this delta's key matches the completion's own round.
         await transport.push_event(
-            _Event(type="agent_delta", data={"text": "let me check", "chain_id": "chain-A"})
+            _Event(
+                type="agent_delta",
+                data={
+                    "text": "let me check",
+                    "chain_id": "chain-A",
+                    "round_index": _ROUND,
+                },
+            )
         )
         await pilot.pause()
         # #6198: chain_id="chain-A" is now a direct _parent_row param —

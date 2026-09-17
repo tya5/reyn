@@ -5918,7 +5918,12 @@ class TextualChatApp(App):
             # already) — settle THAT round, never "whichever is open the
             # longest" or "the highest index seen so far". See
             # :meth:`_pop_streaming_round`'s own docstring for the
-            # regression this replaces and why 0/absent degrades safely.
+            # regression this replaces and what 0/absent actually
+            # degrades to: the open streaming row is released, unsettled,
+            # and the completion lands as its own new row — "two
+            # independent, uncorrelated rows", the SAME shape #6213/#6214
+            # already accepted for a wire-version-skew frame (this
+            # method's own ③ above), not a silent corruption.
             round_index = meta.get("round_index", 0)
             streaming = (
                 self._pop_streaming_round(chain_id, round_index)
