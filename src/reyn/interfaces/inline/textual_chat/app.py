@@ -1467,9 +1467,13 @@ class TextualChatApp(App):
                 getattr(getattr(config, "chat", None), "neutralize_body", False)
             ),
         )
-        # Running tool-call entries keyed by op_id (== the dispatcher's
-        # deterministic args_hash, meta["op_id"]) so a later completion/failure
-        # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
+        # Running tool-call entries keyed by msg.id (== "tool:{dispatch_id}",
+        # dispatcher.py's own new_dispatch_id() minted fresh per call --
+        # #6213, was op_id/args_hash, a CONTENT fingerprint that collided
+        # BY DESIGN when the same tool was called with the same args
+        # twice, settling the wrong row) so a later completion/failure
+        # frame (matched by ITS OWN parent_id against this id) transitions
+        # the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
         # #4691 Phase B B1: the litellm-call TREE PARENT for a given call_id
         # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying a
@@ -5629,12 +5633,13 @@ class TextualChatApp(App):
         :attr:`_current_turn_parent` — every other call site already
         ignored the old ``None`` return, so widening it costs nothing there.
 
-        A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``op_id``
-        matches a tracked RUNNING tool does NOT append a second row: it SETTLES the
-        started entry in place (:meth:`_coalesce_tool_result` — stop the ② live
-        spinner, fold the ``⎿ result`` into the same entry, go SUCCESS/ERROR), so a
-        call and its result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``,
-        the PoC's ``_present_tool_call`` grouping). A ``kind="agent"`` completion
+        A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``parent_id``
+        (``tool:{dispatch_id}`` — #6213) matches a tracked RUNNING tool's own
+        ``id`` does NOT append a second row: it SETTLES the started entry in place
+        (:meth:`_coalesce_tool_result` — stop the ② live spinner, fold the
+        ``⎿ result`` into the same entry, go SUCCESS/ERROR), so a call and its
+        result read as ONE block (CC's ``⏺ tool(args)`` + ``⎿ result``, the PoC's
+        ``_present_tool_call`` grouping). A ``kind="agent"`` completion
         whose ``meta["chain_id"]`` matches an in-flight streamed reply
         (:attr:`_streaming_replies`, #3288 ③c) does not append a second entry
         either: it FINALIZES the same entry the deltas coalesced into, with the
@@ -5713,9 +5718,15 @@ class TextualChatApp(App):
             and entry.item.meta.get("compaction_episode_seq") == meta.get("compaction_episode_seq")
         ):
             return
-        op_id = meta.get("op_id")
-        if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
-            started = self._running_tools.pop(op_id, None)
+        # #6213: keyed by msg.parent_id (== "tool:{dispatch_id}",
+        # outbox.py's own _derive_id_and_parent_id) — not the old
+        # op_id/args_hash meta field (a content fingerprint that
+        # collides BY DESIGN when the same tool is called with the same
+        # args twice; see _apply_lifecycle_state's own comment for the
+        # full account).
+        settle_key = msg.parent_id
+        if kind in ("tool_call_completed", "tool_call_failed") and settle_key is not None:
+            started = self._running_tools.pop(settle_key, None)
             if started is not None:
                 self._coalesce_tool_result(started, msg)
                 return
@@ -5843,21 +5854,31 @@ class TextualChatApp(App):
         """Drive the Phase-2 lifecycle state + Phase-② live body of a NEWLY appended
         row (the non-coalesced path).
 
-        A ``tool_call_started`` row (with an ``op_id`` correlation key) becomes
-        RUNNING (its gutter blinks amber off the native animation clock) AND grows
-        a LIVE body — a spinner + app-computed ``elapsed Ns`` — driven by
-        :meth:`_begin_running_indicator`; its matching completion later coalesces
-        into it (:meth:`_ingest_frame`). An UNCORRELATED ``tool_call_failed`` (no
-        tracked started) or an ``error`` row goes straight to ERROR (coral gutter +
-        tint). Frames without an ``op_id`` carry no state (DEFAULT) — they append
-        exactly as in Phase 1, so the plain-fallback turn sequence is unchanged.
+        A ``tool_call_started`` row (with an ``id`` correlation key,
+        ``tool:{dispatch_id}`` — #6213) becomes RUNNING (its gutter blinks
+        amber off the native animation clock) AND grows a LIVE body — a
+        spinner + app-computed ``elapsed Ns`` — driven by
+        :meth:`_begin_running_indicator`; its matching completion later
+        coalesces into it (:meth:`_ingest_frame`, matched by THAT frame's
+        own ``parent_id`` against THIS row's ``id`` — the same nested
+        ``id``/``parent_id`` vocabulary #6184 established, not a second
+        one). An UNCORRELATED ``tool_call_failed`` (no tracked started) or
+        an ``error`` row goes straight to ERROR (coral gutter + tint).
+        Frames without an ``id`` carry no state (DEFAULT) — they append
+        exactly as in Phase 1, so the plain-fallback turn sequence is
+        unchanged.
 
-        ``_running_tools`` keys the RUNNING entry by ``op_id`` for the settle: it is
-        the handle the completion frame coalesces + stops the animation on. The
-        gutter blink itself is time-based in :class:`ReynGutter`, driven by the
-        native animation tick."""
+        ``_running_tools`` keys the RUNNING entry by ``msg.id`` for the
+        settle: it is the handle the completion frame coalesces + stops
+        the animation on. #6213 (lead-coder, measured): this dict is its
+        OWN index, not a merge into some other id/parent_id-keyed lookup
+        — none exists yet anywhere in this module (a grep-confirmed
+        population of zero other ``.id``/``.parent_id`` readers before
+        this fix); `_running_tools` is the FIRST real consumer of the
+        vocabulary #6184 built. The gutter blink itself is time-based in
+        :class:`ReynGutter`, driven by the native animation tick."""
         kind = msg.kind
-        op_id = (msg.meta or {}).get("op_id")
+        op_id = msg.id
         if kind == "tool_call_started" and op_id is not None:
             entry.set_state(EntryState.RUNNING)
             self._running_tools[op_id] = entry

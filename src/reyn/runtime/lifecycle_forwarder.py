@@ -697,11 +697,15 @@ class ChatLifecycleForwarder:
         outbox message.
 
         Source schema (= ``dispatch/dispatcher.py:200``):
-            {caller_kind, caller_id, tool, chain_id, args, args_hash}
+            {caller_kind, caller_id, tool, chain_id, args, args_hash, dispatch_id}
 
-        ``args_hash`` is the deterministic correlation id we hand to the
-        TUI widget so it can match the eventual ``tool_call_completed`` /
-        ``tool_call_failed`` to this mount call.
+        #6213: ``dispatch_id`` (not ``args_hash``, which collides BY
+        DESIGN when the same tool is called with the same args twice —
+        see ``outbox.py``'s own ``_derive_id_and_parent_id``) is the
+        value that actually correlates this row to its eventual
+        ``tool_call_completed``/``tool_call_failed`` — turned into
+        ``OutboxMessage.id``/``parent_id`` there, not read as a meta key
+        by any consumer directly.
         """
         self._enqueue_tool_call(
             kind="tool_call_started",
@@ -714,7 +718,7 @@ class ChatLifecycleForwarder:
         outbox message.
 
         Source schema (= ``dispatch/dispatcher.py:262``):
-            {caller_kind, caller_id, tool, chain_id, args_hash, result}
+            {caller_kind, caller_id, tool, chain_id, args_hash, result, dispatch_id}
         """
         self._enqueue_tool_call(
             kind="tool_call_completed",
@@ -730,7 +734,7 @@ class ChatLifecycleForwarder:
         outbox message.
 
         Source schema (= ``dispatch/dispatcher.py:222``):
-            {caller_kind, caller_id, tool, chain_id, args_hash, error_kind, message}
+            {caller_kind, caller_id, tool, chain_id, args_hash, error_kind, message, dispatch_id}
         """
         self._enqueue_tool_call(
             kind="tool_call_failed",
@@ -906,15 +910,28 @@ class ChatLifecycleForwarder:
 
         Session-level forwarder has no own ``run_id`` / ``actor`` to
         contribute — every meta field is sourced from the event payload
-        itself. Consumers (= the conv pane's ``_on_tool_call_*``) read
-        ``meta["op_id"]`` (= the deterministic ``args_hash``) to pair
-        start / end events; ``meta["tool"]`` carries the tool name for
-        display; ``args`` / ``result`` / ``error_*`` live in the
-        kind-specific extras — THIS METHOD, and the consumer's own render
-        path (repl's ``renderer.py``, #6184 段2b-1), are unchanged by
-        #6184 段2b-2 below other than ``text``/``details`` themselves —
-        every existing ``meta`` key, ``meta["args"]`` included, is
-        untouched (added to, never replaced).
+        itself. ``meta["tool"]`` carries the tool name for display;
+        ``args`` / ``result`` / ``error_*`` live in the kind-specific
+        extras — THIS METHOD, and the consumer's own render path (repl's
+        ``renderer.py``, #6184 段2b-1), are unchanged by #6184 段2b-2
+        below other than ``text``/``details`` themselves — every
+        existing ``meta`` key, ``meta["args"]`` included, is untouched
+        (added to, never replaced).
+
+        #6213: ``meta["dispatch_id"]`` (``dispatcher.py``'s own
+        ``new_dispatch_id()``, minted fresh per dispatch — never a
+        content fingerprint) is now threaded through too, alongside the
+        PRE-EXISTING ``op_id`` meta key (``args_hash`` — left in place,
+        unread by the new correlation path, #6213 accept ⑤'s own
+        witness that no `src/` site still reads it AS a correlation
+        key). ``dispatch_id`` is not itself read as a correlation key by
+        any consumer — it is an INPUT to ``outbox.py``'s own ONE
+        derivation point (:func:`~reyn.runtime.outbox.
+        _derive_id_and_parent_id`), which turns it into ``OutboxMessage.
+        id``/``parent_id`` in the SAME ``kind:value`` identity
+        vocabulary #6184 already established (#6186's own "one identity
+        system" ruling — a raw new meta key read directly by a TUI
+        consumer would have been a 6th identifier kind).
 
         #6184 段2b-2: ``text`` is now :func:`~reyn.core.present.
         tool_call_compose.compose_tool_call_text` (``tool(args)``,
@@ -936,6 +953,7 @@ class ChatLifecycleForwarder:
         meta: dict = {
             "tool": tool_name,
             "op_id": data.get("args_hash"),
+            "dispatch_id": data.get("dispatch_id"),
             "chain_id": data.get("chain_id"),
             "caller_kind": data.get("caller_kind"),
             "caller_id": data.get("caller_id"),

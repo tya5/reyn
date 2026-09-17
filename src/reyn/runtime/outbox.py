@@ -284,12 +284,18 @@ def _derive_id_and_parent_id(*, kind: str, meta: dict) -> "tuple[str | None, str
     derived, passed through as-is (the same direction #6184's own
     `id` field already established in 段2a-1).
 
-    The 4-branch rule below faithfully REPRODUCES today's real consumer
-    (``app.py``'s :meth:`_resolve_append_parent`/:meth:`_register_call_
-    parent`) — it invents nothing new:
+    The original 4-branch rule below faithfully REPRODUCES today's real
+    consumer (``app.py``'s :meth:`_resolve_append_parent`/:meth:`_register_call_
+    parent`) — it invents nothing new. #6213 added 2 branches AHEAD of
+    it (checked first, both gated on `dispatch_id` presence — see that
+    branch's own comment at the call site for why this is a NEW
+    identity source in the SAME `kind:value` vocabulary, not a 6th
+    identifier kind #6186 already ruled against):
 
-    | condition                          | id              | parent_id        |
-    |-------------------------------------|-----------------|-------------------|
+    | condition                                | id                | parent_id         |
+    |-------------------------------------------|-------------------|--------------------|
+    | `dispatch_id` + `kind=="tool_call_started"`| `tool:{dispatch_id}` | `call:{call_id}` (unchanged) |
+    | `dispatch_id` + `kind in (completed, failed)` | — | `tool:{dispatch_id}` |
     | `call_id` + `kind=="agent"`         | `call:{call_id}`| `turn:{chain_id}` |
     | `call_id` + other `kind`            | —               | `call:{call_id}`  |
     | no `call_id`, `kind != "user"`      | —               | `turn:{chain_id}` |
@@ -333,6 +339,32 @@ def _derive_id_and_parent_id(*, kind: str, meta: dict) -> "tuple[str | None, str
     """
     call_id = meta.get("call_id")
     chain_id = meta.get("chain_id")
+    dispatch_id = meta.get("dispatch_id")
+    # #6213: a `tool:{dispatch_id}` branch, ADDED to the 4-branch table
+    # above, not a replacement of it — `dispatch_id` (dispatcher.py's own
+    # `new_dispatch_id()`, minted fresh per `dispatch_tool` call, unlike
+    # `args_hash`, which collides BY DESIGN when the same tool is called
+    # with the same args twice) is the SAME identity vocabulary this
+    # function already speaks (`kind:value` strings, #6186's own "answer
+    # in one system" ruling), not a 6th identifier kind read directly by
+    # a consumer — a `tool_call_started` row's OWN `id` becomes
+    # `tool:{dispatch_id}` (its `parent_id` is UNCHANGED — still derived
+    # from `call_id`/`chain_id` below, a started row belongs to its
+    # LITELLM call same as before); a `tool_call_completed`/`failed`
+    # row's `parent_id` becomes `tool:{dispatch_id}` INSTEAD OF
+    # `call:{call_id}` — it now names the ONE started row it settles,
+    # not the whole call (#6213 accept ⑦'s own note: correct AS nesting,
+    # Claude Code's own "the tool call and its result expand together"
+    # shape; an orphaned completion whose started row never absorbed it
+    # still renders identically — its OWN presentation never reads
+    # `parent_id`, see the app.py side of this fix). A message with no
+    # `dispatch_id` (any producer that predates this fix, or one that
+    # never threads it through) falls through to the pre-#6213 rule
+    # below, unchanged.
+    if dispatch_id and kind == "tool_call_started":
+        return f"tool:{dispatch_id}", (f"call:{call_id}" if call_id else None)
+    if dispatch_id and kind in ("tool_call_completed", "tool_call_failed"):
+        return None, f"tool:{dispatch_id}"
     if call_id and kind == "agent":
         return f"call:{call_id}", (f"turn:{chain_id}" if chain_id else None)
     if call_id:

@@ -397,7 +397,10 @@ async def test_reset_running_tools_stale_op_id_does_not_silently_coalesce(
 
             transport.push_display(OutboxMessage(
                 kind="tool_call_started", text="shell__run",
-                meta={"op_id": "op-stale", "tool": "shell__run", "args": {}},
+                meta={
+                    "op_id": "op-stale", "dispatch_id": "op-stale",
+                    "tool": "shell__run", "args": {},
+                },
             ))
             await _settle(pilot)
             # Unpacking into a single-element tuple IS the "exactly one RUNNING
@@ -415,7 +418,10 @@ async def test_reset_running_tools_stale_op_id_does_not_silently_coalesce(
             # Same op_id, now on beta — must NOT be silently swallowed.
             transport.push_display(OutboxMessage(
                 kind="tool_call_completed", text="",
-                meta={"op_id": "op-stale", "tool": "shell__run", "result": "done"},
+                meta={
+                    "op_id": "op-stale", "dispatch_id": "op-stale",
+                    "tool": "shell__run", "result": "done",
+                },
             ))
             await _settle(pilot)
 

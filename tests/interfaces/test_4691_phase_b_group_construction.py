@@ -79,10 +79,14 @@ def _parent_row(
 
 
 def _started(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMessage:
+    # #6213: `dispatch_id` (reusing this fixture's own `op_id` param as
+    # its value — every existing call site stays unchanged) is what
+    # actually correlates a started row to its completion now; `call_id`
+    # is UNCHANGED as the row's own parent.
     return OutboxMessage(
         kind="tool_call_started",
         text=tool,
-        meta={"tool": tool, "op_id": op_id, "args": {}, "call_id": call_id},
+        meta={"tool": tool, "op_id": op_id, "dispatch_id": op_id, "args": {}, "call_id": call_id},
     )
 
 
@@ -91,7 +95,7 @@ def _completed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxM
         kind="tool_call_completed",
         text="",
         meta={
-            "tool": tool, "op_id": op_id, "call_id": call_id,
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id, "call_id": call_id,
             "result": {"op": tool, "count": 3},
         },
     )
@@ -102,7 +106,7 @@ def _failed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMess
         kind="tool_call_failed",
         text=tool,
         meta={
-            "tool": tool, "op_id": op_id, "call_id": call_id,
+            "tool": tool, "op_id": op_id, "dispatch_id": op_id, "call_id": call_id,
             "error_kind": "Boom", "error_message": "it broke",
         },
     )
