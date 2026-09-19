@@ -56,22 +56,28 @@ Measured baseline this was built against (real TUI, real model, 463 chunks):
 work 0.31 ms/chunk, wait 17.84 ms/chunk, **0** loop stalls over 12 ms. The
 tripwire is silent on a healthy loop by construction, not by tuning.
 
-**One opt-in session's own numbers, not a design input (#6234).**
+**One opt-in session's own numbers, not a design input (#6237).**
 reyn-self's ``.reyn/logs/reyn.log`` (2026-08-13 12:18 -> 2026-09-19
 12:47, ~37 days, 18,134 lines; that log is not in this tree and will
 rotate away, which is the only reason it is written down here) recorded
 "the interface was unresponsive for ..." 2,860 times and "...recovered
-from the stall reported above" 3,834 times — roughly 77 threshold
-crossings/day. Lateness was overwhelmingly sub-second: 0.3s x918, 0.4s
-x407, 0.5s x251, 0.6s x187, 0.7s x133, 0.8s x100 — but the TAIL is not
-negligible: 0.7s or slower is 233 of those (~6/day), and a stall that
-long is plausibly felt by a person at the keyboard, unlike the 0.3s
-mode. That count is THRESHOLD CROSSINGS with ``REYN_TRIPWIRE_MS`` armed
-for that one run (the module default above never fires), not 2,860
-user-visible hangs — read without the threshold in view, "2,860"
-overstates the symptom. Which OPERATION each crossing landed on is not
-measured. One log, one working directory, one period: this does not
-generalise to interactive TUI usage.
+from the stall reported above" 3,834 times. Lateness spans 0.3s to
+33.6s, not just the sub-second mode: 0.3s x918, 0.4s x407, 0.5s x251,
+0.6s x187, 0.7s x133, 0.8s x100 ... down to a tail of 9 crossings past
+10s (10.9s x2, 11.1s, 11.2s, 12.3s, 13.1s, 13.2s, 14.3s, and one 33.6s
+outlier). The 0.7s+ crossings (233 of them) are NOT spread evenly
+across the 37 days — an "N/day" average erases that shape — they
+cluster on 3 dates: 2026-09-06 (564), 09-07 (234), 09-05 (216), with
+2026-09-04/03/02 at 36/21/12 and the rest of the period far lower.
+🔴 THIS COUNT DOES NOT DISTINGUISH reyn hanging from the MACHINE
+suspending/sleeping — the 33.6s outlier lands at 2026-09-07 02:56
+(late night), and this module has no suspend/wake detection, so a
+laptop sleep would show up identically to a real stall. It is also
+THRESHOLD CROSSINGS with ``REYN_TRIPWIRE_MS`` armed for that one run
+(the module default above never fires), not 2,860 user-visible hangs.
+Which OPERATION each crossing landed on, and why the 3 dates cluster,
+are both unmeasured. One log, one working directory, one period: this
+does not generalise to interactive TUI usage.
 """
 from __future__ import annotations
 
