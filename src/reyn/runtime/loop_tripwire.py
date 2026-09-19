@@ -55,6 +55,23 @@ textual_chat.loop_probe`` re-exports every name below for the CUI's own use.
 Measured baseline this was built against (real TUI, real model, 463 chunks):
 work 0.31 ms/chunk, wait 17.84 ms/chunk, **0** loop stalls over 12 ms. The
 tripwire is silent on a healthy loop by construction, not by tuning.
+
+**One opt-in session's own numbers, not a design input (#6234).**
+reyn-self's ``.reyn/logs/reyn.log`` (2026-08-13 12:18 -> 2026-09-19
+12:47, ~37 days, 18,134 lines; that log is not in this tree and will
+rotate away, which is the only reason it is written down here) recorded
+"the interface was unresponsive for ..." 2,860 times and "...recovered
+from the stall reported above" 3,834 times — roughly 77 threshold
+crossings/day. Lateness was overwhelmingly sub-second: 0.3s x918, 0.4s
+x407, 0.5s x251, 0.6s x187, 0.7s x133, 0.8s x100 — but the TAIL is not
+negligible: 0.7s or slower is 233 of those (~6/day), and a stall that
+long is plausibly felt by a person at the keyboard, unlike the 0.3s
+mode. That count is THRESHOLD CROSSINGS with ``REYN_TRIPWIRE_MS`` armed
+for that one run (the module default above never fires), not 2,860
+user-visible hangs — read without the threshold in view, "2,860"
+overstates the symptom. Which OPERATION each crossing landed on is not
+measured. One log, one working directory, one period: this does not
+generalise to interactive TUI usage.
 """
 from __future__ import annotations
 
