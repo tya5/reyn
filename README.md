@@ -87,7 +87,7 @@ Index your own docs for retrieval, or automate a repeatable procedure:
 - **RAG over your own documents** — in `reyn chat`, ask the agent to ingest a folder; Reyn installs the bundled `rag` plugin for you, asking permission before it writes anything. See [Build a RAG corpus](docs/guide/for-users/build-a-rag-corpus.md).
 - **Reusable workflows** — write a small YAML [pipeline](docs/guide/for-users/write-a-pipeline.md), register it (a `reyn.yaml` entry, or ask the agent to install it), then run it — `reyn pipe run <name> --input '<json>'` from the shell, or ask the agent to launch it in chat.
 
-Walkthroughs: [chat mode](docs/guide/getting-started/02-chat-mode.md) · [RAG](docs/concepts/data-retrieval/rag.md).
+Walkthrough: [chat mode](docs/guide/getting-started/02-chat-mode.md).
 
 ---
 
