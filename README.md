@@ -82,12 +82,10 @@ reyn chat
 
 > **A note on the default model.** Reyn's default `models.standard` points at a low-cost LLM; occasional empty replies on tool-heavy queries and router-vocabulary leakage in non-English answers are normal at the weak tier and dissolve on stronger models. Point `models.standard` at a stronger model if it matters — details in the [Quick Start guide](docs/guide/getting-started/02-chat-mode.md).
 
-Index your own docs for retrieval, or write a reusable typed workflow:
+Index your own docs for retrieval, or automate a repeatable procedure:
 
-```bash
-reyn run index_docs '{"type":"index_docs_input","data":{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}}'
-reyn run my_skill "Summarize AI trends in education."
-```
+- **RAG over your own documents** — in `reyn chat`, ask the agent to ingest a folder; Reyn installs the bundled `rag` plugin for you, asking permission before it writes anything. See [Build a RAG corpus](docs/guide/for-users/build-a-rag-corpus.md).
+- **Reusable workflows** — write a small YAML [pipeline](docs/guide/for-users/write-a-pipeline.md), register it (a `reyn.yaml` entry, or ask the agent to install it), then run it — `reyn pipe run <name> --input '<json>'` from the shell, or ask the agent to launch it in chat.
 
 Walkthroughs: [chat mode](docs/guide/getting-started/02-chat-mode.md) · [RAG](docs/concepts/data-retrieval/rag.md).
 
