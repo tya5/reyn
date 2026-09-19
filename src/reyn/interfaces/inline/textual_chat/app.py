@@ -4223,7 +4223,37 @@ class TextualChatApp(App):
             if 0 <= event.option_index < len(rows):
                 row = rows[event.option_index]
                 if row.error is None and row.ref is None and row.inline_content is not None:
-                    await self._handle_open_inline_artifact_request(row)
+                    # #6224: this call site sits OUTSIDE ``_pump_frames`` (a
+                    # message handler, not a pump frame) — an uncaught
+                    # exception here would leave ZERO on-screen trace: no
+                    # ``frame pump: N swallowed — see log`` (that text only
+                    # fires off :attr:`_pump_swallow_stats`, which before
+                    # this fix only the pump's own ``except Exception`` legs
+                    # bumped) and no ``on_exception``/``_handle_exception``
+                    # override exists on this app to catch it either. The
+                    # REF-backed sibling row (``/open <ref>``, routed
+                    # through the pump's own ``__open_artifact__`` leg)
+                    # already gets that counter bump for free; this
+                    # pure-inline row must not be quieter than it. Reuse
+                    # :meth:`_record_pump_swallow` directly rather than
+                    # inventing a second counter/event mechanism (architect
+                    # ruling, #6224 review: this call site is the recovery
+                    # of a design the method's own docstring already
+                    # declared, not a new one) — its ``kind`` argument is
+                    # just a label, not a frame-loop dependency, so calling
+                    # it from here is exactly as valid as calling it from
+                    # the pump. See :meth:`_record_pump_swallow`'s own
+                    # docstring for the full, honest list of which
+                    # ``_pump_frames`` call sites route through it and
+                    # which do not — this call site is now one MORE that
+                    # does, still not every one that could.
+                    try:
+                        await self._handle_open_inline_artifact_request(row)
+                    except Exception as exc:
+                        logger.exception(
+                            "textual chat: inline artifact open failed"
+                        )
+                        self._record_pump_swallow("__open_inline_artifact__", exc)
                     self._open_drawer(None)
                     return
         cmds = self._pane_commands.get(tab_id or "", [])
@@ -5780,14 +5810,39 @@ class TextualChatApp(App):
             )
 
     def _record_pump_swallow(self, kind: str, exc: BaseException) -> None:
-        """#5732: the ONE call site every ``except Exception`` block in
-        :meth:`_pump_frames` routes through — bumps :attr:`_pump_swallow_
+        """#5732 (corrected #6224 — see below): bumps :attr:`_pump_swallow_
         stats` (the always-complete count) and, only on the first time
         THIS ``(kind, exception type)`` pair is seen, durably records a
         ``pump_exception_swallowed`` audit-event (architect ruling: bounded
         by the pair, never by the occurrence — a broken call site fails
         every frame, so 1-event-per-occurrence would flood ``.reyn/events``
         with thousands of records for a single defect).
+
+        #6224 correction: this docstring used to claim this is "the ONE
+        call site every ``except Exception`` block in :meth:`_pump_frames`
+        routes through" — that was false the whole time it stood (architect
+        count, #6224 review): of that method's own ~20 ``except Exception``
+        blocks, only 4 route through this method — the three CLIENT-
+        consumed sentinel handlers (``__copy_last_reply__``/
+        ``__rewind_list__``/``__open_artifact__``) and the generic
+        display-frame path (``_ingest_frame`` for any ``kind`` not caught
+        above). Every EVENT-frame handler (``session_attached``,
+        ``user_submitted``, ``turn_started``, ``inbox_cancel``,
+        ``intervention_answer_submitted``, ``session_halted``,
+        ``agent_delta``), the turn-end sweep family (activity-row clear,
+        the 3 orphan sweeps, turn-parent settle), the queue-view seed, and
+        the two chrome-refresh guards log via ``logger.exception`` ALONE —
+        no counter bump, no audit-event, nothing an operator sees on
+        screen. That gap is real, not closed by this docstring fix, and is
+        tracked separately (out of THIS method's own scope) rather than
+        papered over here with a promise this change does not keep. #6224
+        also added a call site OUTSIDE ``_pump_frames`` entirely — an
+        Artifacts-row selection handler (see
+        :meth:`TextualChatApp.on_option_list_option_selected`) — so "the
+        ONE call site" was never accurate even in the narrower "inside the
+        pump" sense once that landed; this method's own ``kind`` label is
+        just a stats/audit-event key, with no dependency on being called
+        from inside the pump's frame loop.
 
         ``emit_cli_event`` (cwd-derived project root), not ``emit_direct_
         event`` with an explicit root: unlike a long-lived multi-project
@@ -5801,7 +5856,8 @@ class TextualChatApp(App):
 
         Never includes the exception's own message/traceback — that is
         `logger.exception`'s own job (already called at every one of
-        this method's 4 call sites, unchanged); the audit-event carries
+        this method's call sites — 4 inside :meth:`_pump_frames`, plus
+        #6224's own outside-the-pump one — unchanged); the audit-event carries
         only ``frame_kind``/``exception_type`` (named ``frame_kind``,
         not ``kind`` — ``emit_cli_event``'s own first positional
         parameter is itself named ``kind``, the audit-event's own kind

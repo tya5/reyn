@@ -2204,16 +2204,25 @@ def status_line_text(
     — diagnostics can coexist with any of those, so it is not folded into
     any single branch's own return.
 
-    #5732: ``pump_swallow_count`` (default 0, byte-identical text when
-    unset) PREPENDS a further ``draw failed: N — see log`` segment, the
-    SAME shape as ``diagnostics_count`` immediately above (never a
-    traceback, never a transient toast — architect ruling: an operator
-    needs "something failed to draw, N times" and where to look, not the
-    exception itself) — a pump call site (frame ingest, ``/rewind``,
-    ``/open``) raised and was caught to keep the chat loop alive
-    (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
-    _record_pump_swallow`); this is the operator-facing half of that
-    fact, never shown when the count is 0. Ordered ahead of
+    #5732 (wording widened #6224): ``pump_swallow_count`` (default 0,
+    byte-identical text when unset) PREPENDS a further ``frame pump: N
+    swallowed — see log`` segment, the SAME shape as ``diagnostics_count``
+    immediately above (never a traceback, never a transient toast —
+    architect ruling: an operator needs "something failed, N times" and
+    where to look, not the exception itself) — a call site guarded by
+    :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _record_pump_swallow` raised and was caught to keep the chat loop (or,
+    since #6224, a message-handler call site outside the pump loop itself
+    — see that method's own docstring for which call sites route through
+    it today) alive; this is the operator-facing half of that fact, never
+    shown when the count is 0. #6224: the segment's own wording was
+    ``draw failed: N — see log`` before this — accurate while every
+    routed call site was a DISPLAY frame ingest, but #6224 added a
+    non-draw call site (an Artifacts-row selection handler) to the same
+    counter, so "draw" stopped describing every occurrence; this is the
+    SAME counter widened to a SAME-shape but non-draw-specific word, never
+    a second counter (an operator would otherwise have to check two
+    numbers for "did anything get swallowed"). Ordered ahead of
     ``diagnostics_count`` (leftmost = most recently added) — no
     dependency between the two, an arbitrary but stable order.
     """
@@ -2252,7 +2261,7 @@ def status_line_text(
     if diagnostics_count:
         text = f"diagnostics: {diagnostics_count} — {diagnostics_log_path or '.reyn/logs/reyn.log'} · {text}"
     if pump_swallow_count:
-        text = f"draw failed: {pump_swallow_count} — see log · {text}"
+        text = f"frame pump: {pump_swallow_count} swallowed — see log · {text}"
     return text
 
 

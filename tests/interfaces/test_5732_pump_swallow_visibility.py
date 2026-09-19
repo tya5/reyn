@@ -122,16 +122,16 @@ def test_status_line_unaffected_when_pump_swallow_count_is_zero() -> None:
         {"model_active_class": "opus"}, "alpha", pump_swallow_count=0,
     )
     assert text_before == text_default
-    assert "draw failed" not in text_default
+    assert "frame pump" not in text_default
 
 
-def test_status_line_prepends_draw_failed_segment_when_count_is_nonzero() -> None:
+def test_status_line_prepends_frame_pump_segment_when_count_is_nonzero() -> None:
     """Tier 2: acceptance ⑦'s "N — see log" half; acceptance ⑧ — the
     segment names a count, never a traceback or exception message."""
     text = status_line_text(
         {"model_active_class": "opus"}, "alpha", pump_swallow_count=3,
     )
-    assert text.startswith("draw failed: 3 — see log"), text
+    assert text.startswith("frame pump: 3 swallowed — see log"), text
     assert "opus" in text, "the ordinary status text must still follow"
     assert "Traceback" not in text
     assert "Error" not in text
@@ -145,7 +145,7 @@ def test_status_line_pump_swallow_coexists_with_diagnostics_segment() -> None:
         {"model_active_class": "opus"}, "alpha",
         diagnostics_count=1, pump_swallow_count=2,
     )
-    assert "draw failed: 2" in text
+    assert "frame pump: 2 swallowed" in text
     assert "diagnostics: 1" in text
 
 
@@ -358,7 +358,7 @@ async def test_a_broken_ingest_frame_is_visible_in_the_status_line(
         # Public read, per the architect's own design ("count は公開の読みに
         # 載る") — the status line, not a private ._pump_swallow_stats access.
         status_text = str(app.query_one(StatusLine).render())
-        assert "draw failed: 1" in status_text, (
+        assert "frame pump: 1 swallowed" in status_text, (
             f"a swallowed ingest failure did not surface on the status "
             f"line: {status_text!r}"
         )
@@ -407,7 +407,7 @@ async def test_the_pump_survives_a_broken_ingest_frame_and_keeps_running(
         # Public read, mirrors the sibling test above — only the broken
         # (status) frame should have been recorded, not the ordinary one.
         status_text = str(app.query_one(StatusLine).render())
-        assert "draw failed: 1" in status_text, (
+        assert "frame pump: 1 swallowed" in status_text, (
             f"only the broken (status) frame should have been recorded: "
             f"{status_text!r}"
         )
