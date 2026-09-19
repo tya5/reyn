@@ -103,6 +103,13 @@ async def test_app_reads_open_artifact_ref_from_meta_not_text(tmp_path, monkeypa
     driven through the PUMP LOOP (a real frame off the transport stream)
     rather than by calling the handler method directly, so this test is
     the one that would catch a regression back to reading ``msg.text``.
+
+    Strip-falsify note: reverting the pump loop to read ``msg.text`` makes
+    THIS test HANG, not fail cleanly — the decoy text fails ``resolve_ref``,
+    so the fake opener never launches and the unbounded ``while not
+    sink.exists()`` poll below never terminates; CI's own ``--timeout`` is
+    what stops it. A future person who breaks this fix and sees the test
+    freeze should read that as "I broke it", not "this test is flaky".
     """
     (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     target = tmp_path / "report.pptx"
