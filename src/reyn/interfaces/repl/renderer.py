@@ -1,19 +1,178 @@
 """Pluggable chat UI backends for reyn chat."""
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import sys
 import time
+from dataclasses import dataclass, field
 from io import StringIO
 
 from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 
 from reyn.interfaces import palette
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.outbox import DISPLAY_KINDS, OutboxMessage
 
 _log = logging.getLogger(__name__)
+
+
+def legible_degrade_text(kind: str, text: str) -> str:
+    """#6230 stage 2 (issue thread ruling): the line a surface shows for a
+    frame it has no specific presentation for — including a ``kind`` it
+    does not recognize at all. Three tiers, tried in order, so the result
+    is STRUCTURALLY impossible to be empty (never "we call a function
+    that outputs text" — the invariant is enforced by this function's own
+    shape, not by hoping every caller remembers to check):
+
+    1. ``text`` is non-empty → shown verbatim (the common case: a real
+       reply, a real status line, or — since stage 1, #6235 — a sentinel's
+       own prepared human-readable fallback).
+    2. ``text`` is empty but ``kind`` is not → a line naming the kind, so
+       a reader at least knows WHAT arrived even with nothing to say
+       about it.
+    3. Both empty → a fixed line. This is the tier that makes "empty"
+       unreachable: there is no fourth case left to fall through.
+
+    ``OutboxMessage.from_wire``'s own docstring already states the
+    decision this makes true: an unknown wire kind "MUST degrade
+    gracefully (ignore-unknown), never fail-close" — this function is
+    what "gracefully" cashes out to at the point text actually reaches a
+    human, not a new decision.
+
+    ``__end__`` (the one CONTROL kind with ``text=""`` BY CONSTRUCTION,
+    ``transport/agui/endpoint.py``) never reaches this function: every
+    caller's own frame loop returns/breaks on ``kind == "__end__"``
+    before rendering anything (``textual_chat/app.py``'s pump,
+    ``repl/stream_client.py``'s output loop) — so tier 3 firing for
+    ``__end__`` specifically is structurally unreachable, not excluded by
+    a literal check here.
+    """
+    if text:
+        return text
+    if kind:
+        return f"(unrecognized frame: kind={kind!r}, no text)"
+    return "(an unreadable frame arrived)"
+
+
+@dataclass
+class UnknownKindStats:
+    """#6230 stage 2: the witness that a ``kind`` outside
+    :data:`~reyn.runtime.outbox.DISPLAY_KINDS` reached a renderer — kept
+    alive precisely so the degrade in :func:`legible_degrade_text` cannot
+    make a future routing defect invisible the way #6234's own dead-ended
+    investigation was.
+
+    Deliberately a SIBLING of ``textual_chat.app.PumpSwallowStats``, not a
+    reuse of it: that class's ``record(kind, exc: BaseException)`` is keyed
+    on an actual caught exception, and this event has none BY DESIGN — the
+    whole point of stage 1+2 is that an unrecognized kind renders instead
+    of raising. Forcing a fake ``exc`` through the existing method to reuse
+    its shape would fabricate a field this event does not have (CLAUDE.md:
+    no unjustified/fabricated fields). Same "always-complete count,
+    first-occurrence-only audit-event" shape as ``PumpSwallowStats``
+    though — one bounded, discoverable record per DISTINCT kind, not one
+    per occurrence (a mis-routed producer emitting the same wrong kind on
+    every frame must not flood ``.reyn/events``)."""
+
+    count: int = 0
+    _seen: "set[str]" = field(default_factory=set)
+
+    def record(self, kind: str) -> bool:
+        """Record one unknown-kind frame. Returns True iff this ``kind``
+        has never been recorded before on this instance — first
+        occurrence only, the caller's own signal to emit the bounded
+        audit-event; ``count`` still increments on a repeat."""
+        self.count += 1
+        if kind in self._seen:
+            return False
+        self._seen.add(kind)
+        return True
+
+
+def record_unknown_kind_frame(
+    stats: UnknownKindStats, kind: str, *, ui_surface: str, transport_kind: str
+) -> None:
+    """First-occurrence-only ``display_frame_unknown_kind`` audit-event for
+    an unrecognized ``kind`` (#6230 stage 2, item 3 of the issue thread's
+    acceptance list — "the record must carry (1) where it arrived from
+    (2) where it failed").
+
+    What this can and cannot honestly fill in, disclosed here (not only in
+    the PR — the instruction that produced the #6234 dead-end):
+
+    - **frame_kind**: the ``kind`` string itself. Always obtainable.
+    - **ui_surface**: which renderer caught it (``"textual_chat"`` /
+      ``"plain_cui"``) — the caller's own identity, always obtainable.
+      Named ``ui_surface``, not ``surface`` — ``emit_cli_event`` already
+      stamps its OWN ``surface="cli"`` on every event it emits
+      (``core/events/events.py``); passing this field under that same
+      name collides exactly the way ``_record_pump_swallow``'s own
+      ``kind``/``frame_kind`` split was forced to avoid (#5732's own
+      documented ``TypeError: ... multiple values for argument`` —
+      reproduced here for real by an early draft of this function's own
+      test, not merely reasoned about).
+    - **transport_kind**: ``type(transport).__name__`` — obtainable at
+      every call site today (both callers hold a live transport
+      reference). This is "where it arrived from" for (1) — the nearest
+      fact this layer genuinely has. A remote PEER identifier or a
+      client BUILD identifier would answer (1) more precisely, but
+      neither is obtainable at this layer: peer identity lives at the
+      wire layer (``transport/agui/endpoint.py``'s connection handling),
+      several layers below a renderer that only ever sees a decoded
+      ``OutboxMessage``, and no build/version identifier is threaded
+      onto a frame anywhere in this codebase today (grep-confirmed
+      against ``OutboxMessage``'s own fields). Plumbing either through
+      is out of THIS stage's scope — stated here rather than fabricated.
+    - **detected_at**: ``file:line`` of the call site that decided this
+      ``kind`` was unrecognized, captured dynamically via
+      :func:`inspect.stack` so it can never drift from the code that
+      actually classified it (a hardcoded string would). This is (2) —
+      "where it failed" reinterpreted honestly: nothing RAISES on this
+      path any more (that is the entire point of stage 1+2), so there is
+      no exception frame to point at; the position recorded is instead
+      where the classification itself happened, which is the file a
+      future investigator needs to open first.
+    """
+    if not stats.record(kind):
+        return
+    caller = inspect.stack()[1]
+    detected_at = f"{caller.filename}:{caller.lineno}"
+    try:
+        from reyn.core.events.events import emit_cli_event
+
+        emit_cli_event(
+            "display_frame_unknown_kind",
+            frame_kind=kind,
+            ui_surface=ui_surface,
+            transport_kind=transport_kind,
+            detected_at=detected_at,
+        )
+    except Exception:
+        _log.exception(
+            "renderer: failed to emit display_frame_unknown_kind for "
+            "kind=%r (diagnostic-only, never blocks rendering)",
+            kind,
+        )
+
+
+def is_unknown_kind(kind: str) -> bool:
+    """Whether *kind* falls outside the closed display vocabulary
+    (:data:`~reyn.runtime.outbox.DISPLAY_KINDS`) — the population
+    #6230 stage 2's degrade (:func:`legible_degrade_text`) and witness
+    (:func:`record_unknown_kind_frame`) exist for.
+
+    The three CONTROL kinds (``__end__`` / ``__copy_last_reply__`` /
+    ``__open_artifact__``) are intercepted BY NAME in each caller's own
+    frame loop before reaching a generic fallback (the pump's ``elif
+    msg.kind == "__copy_last_reply__"`` etc., ``__end__``'s own
+    loop-``break``/``return``) — this function is never evaluated for them
+    in practice. It answers the general question ("is this kind in the
+    closed vocabulary at all"), not "is this specifically one of the
+    sentinels callers already special-case by name."
+    """
+    return kind not in DISPLAY_KINDS
 
 
 def _meta_prefix(meta: dict) -> str:
@@ -238,7 +397,11 @@ class ConsoleChatRenderer(ChatRenderer):
             return
         kind_prefix = self._PREFIX.get(msg.kind, "")
         meta_prefix = _meta_prefix(msg.meta)
-        body_text = msg.text
+        # #6230 stage 2 item 1: this plain renderer used to write `msg.text`
+        # RAW — an unrecognized kind with empty text (e.g. a decode-skewed
+        # or genuinely foreign wire kind) wrote nothing but a blank line.
+        # `legible_degrade_text` guarantees a real, non-blank line instead.
+        body_text = legible_degrade_text(msg.kind, msg.text)
         if self._neutralize_body:
             # #3318: this method writes body_text to the terminal RAW (no
             # markdown/`_body_renderable` pass — this renderer has its own
@@ -326,7 +489,12 @@ class RichChatRenderer(ChatRenderer):
         # that fallback (issue #2655).
         c.width = _live_terminal_width()
         kind = msg.kind
-        text = f"{_meta_prefix(msg.meta)}{msg.text}"
+        # #6230 stage 2 item 1: same structural guarantee as
+        # ConsoleChatRenderer.message() above — an unrecognized kind (or any
+        # kind whose producer left `text` empty) still prints a real line,
+        # never a blank one (the `else` branch below is exactly the
+        # "no per-kind styling" fallback an unknown kind takes).
+        text = f"{_meta_prefix(msg.meta)}{legible_degrade_text(kind, msg.text)}"
         if kind == "agent":
             from rich.text import Text
             rendered = Text.assemble(("agent  ", "bold cyan"), (text, ""))

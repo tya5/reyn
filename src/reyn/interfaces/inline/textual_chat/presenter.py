@@ -37,6 +37,7 @@ from reyn.interfaces.repl.renderer import (
     _SPINNER,
     _body_renderable,
     _compose_args,
+    legible_degrade_text,
     summarize_tool_result,
 )
 from reyn.tools.subject import subject_param_names
@@ -788,8 +789,16 @@ def _body_and_background(
         return Text(f"✗ {_neutralized_label(str(err))}", style=_CC_ERR), _CC_ERR_BG
     line = _KIND_LINE.get(kind)
     body_style = line[2] if line else _CC_TEXT
+    # #6230 stage 2 item 1: was `msg.text or " "` — a single space is not
+    # empty by Python's `not ""`, but it renders as a blank line, which is
+    # exactly the "structurally empty" degrade the issue thread ruled
+    # against. `legible_degrade_text` names the kind (or a fixed fallback
+    # line) when `text` itself is empty, so this — the catch-all path any
+    # kind THIS presenter has no specific handling for lands on, including
+    # a kind it does not recognize at all — can never show nothing.
     body = _body_renderable(
-        kind, msg.text or " ", body_style, neutralize_body=neutralize_body
+        kind, legible_degrade_text(kind, msg.text or ""), body_style,
+        neutralize_body=neutralize_body,
     )
     if kind == "user":
         background = _CC_USER_BG

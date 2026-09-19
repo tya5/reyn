@@ -205,6 +205,18 @@
     return s ? `?${s}` : "";
   }
 
+  // #6230 stage 2 item 1: the same structural "never empty" degrade the
+  // Python surfaces use (reyn.interfaces.repl.renderer.legible_degrade_text)
+  // — a JS port, not a shared import (this file has no module loader for a
+  // Python source). Three tiers: `text` if non-empty; else a line naming
+  // `kind`; else a fixed line. Kept in sync BY HAND with the Python version
+  // if either changes shape (no shared source across the language boundary).
+  function _legibleDegradeText(kind, text) {
+    if (text) return text;
+    if (kind) return "(unrecognized frame: kind=" + JSON.stringify(kind) + ", no text)";
+    return "(an unreadable frame arrived)";
+  }
+
   function _onReynDisplayEvent(ev) {
     let data;
     try { data = JSON.parse(ev.data); } catch (_) { return; }
@@ -214,13 +226,38 @@
     // ignore-unknown / graceful-degrade contract (D6).
     if (!reyn || reyn.frame !== "display") return;
     const kind = reyn.kind || "";
-    // Control sentinels (__copy_last_reply__ / __rewind_list__ / __attach_request__)
-    // ride the wire as CUSTOM display frames for the terminal thin client, but the
-    // browser message-shell does not consume them and never received them before.
-    // Drop the __-prefixed control namespace.
-    if (kind.startsWith("__")) return;
+    // #6230 stage 2 item 4 (issue thread ruling — architect ⑤): a `__`-
+    // prefixed kind (__copy_last_reply__ / __rewind_list__ — the only two
+    // ever reach here; __end__/__open_artifact__ are control-filtered
+    // server-side, outbox.py's CONTROL_KINDS, and never forwarded on the
+    // wire at all) is a reyn CONTROL sentinel: its `meta` carries a value
+    // meant for a reyn-AWARE consumer to act on (e.g. resolve+copy a
+    // reply). THIS shell has no reyn-specific handling for any of them —
+    // it must never OBEY that control meaning (a generic client acting on
+    // a reyn sentinel would be the tail wagging the dog). That is why this
+    // check stays: it is what stops a future handler from being wired to
+    // `meta` here. It was NEVER a reason to hide the frame outright —
+    // `text` (stage 1, #6230) is a human-readable fallback built
+    // specifically for a surface exactly like this one. Deleting this
+    // whole branch (instead of just the `return`) would look like a
+    // harmless cleanup once the frame renders fine, but it removes the
+    // comment recording WHY `meta` must stay unread here — the next
+    // editor would then be one `meta`-driven feature away from making this
+    // client start obeying reyn control sentinels.
+    if (kind.startsWith("__")) {
+      // Ignore the control meaning only — still dispatch, with a
+      // guaranteed-legible `text` (stage 2 item 1's structural guarantee,
+      // ported above) so a consumer with no per-kind handling still shows
+      // something real instead of nothing.
+      _dispatch("agent.message", {
+        kind, text: _legibleDegradeText(kind, reyn.text || ""), meta: {},
+      });
+      return;
+    }
     // Reconstruct the exact {kind,text,meta} contract — designs unchanged.
-    _dispatch("agent.message", { kind, text: reyn.text || "", meta: reyn.meta || {} });
+    _dispatch("agent.message", {
+      kind, text: _legibleDegradeText(kind, reyn.text || ""), meta: reyn.meta || {},
+    });
   }
 
   function _connectSSE(agentName) {

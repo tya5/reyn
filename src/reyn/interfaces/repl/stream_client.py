@@ -38,7 +38,12 @@ from reyn.interfaces.transport.frames import (
 from reyn.runtime.outbox import OutboxMessage
 
 from ._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
-from .renderer import ChatRenderer
+from .renderer import (
+    ChatRenderer,
+    UnknownKindStats,
+    is_unknown_kind,
+    record_unknown_kind_frame,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +314,13 @@ async def run_output_loop(
     # Newest-first ring of recent agent replies so `/copy [N]` can grab the
     # latest (or an older) reply and pipe it to the system clipboard.
     recent_replies: deque[str] = deque(maxlen=COPY_BUFFER_MAX)
+    # #6230 stage 2: this plain/repl client's own witness that an
+    # unrecognized `kind` reached it — process-lifetime for this ONE
+    # output-loop invocation, the same scoping `TextualChatApp.
+    # _unknown_kind_stats` uses for its own App-instance lifetime (there
+    # is no App object here to hang it off; the closure is this loop's
+    # own equivalent).
+    unknown_kind_stats = UnknownKindStats()
 
     async def _render_display_message(msg: OutboxMessage) -> None:
         # #5139: factored out of the loop body below so a
@@ -319,6 +331,16 @@ async def run_output_loop(
         # would have been individually before #5139 flattened them into
         # this SAME loop) and a genuinely live ``DisplayFrame`` share ONE
         # render path instead of two.
+        # #6230 stage 2: same witness call as `TextualChatApp._ingest_
+        # frame` — FIRST, before any kind-specific handling, so it fires
+        # for every unrecognized kind reaching this surface, not only the
+        # ones that fall through to the generic `renderer.message()` path
+        # below.
+        if is_unknown_kind(msg.kind):
+            record_unknown_kind_frame(
+                unknown_kind_stats, msg.kind,
+                ui_surface="plain_cui", transport_kind=type(transport).__name__,
+            )
         if msg.kind == "agent":
             recent_replies.appendleft(msg.text)
         elif msg.kind == "__copy_last_reply__":
