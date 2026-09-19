@@ -50,6 +50,27 @@ evidence the code path fires at the right relative-size boundary; it is
 not a substitute for -- and must not be read as closing -- the owner's
 own real-machine confirmation #5888 is still waiting on.
 
+It also reaches its 75% boundary under a NON-default token estimator.
+``CompactionConfig(use_chars4_estimate=True)`` below selects the
+``len(text) // 4`` estimator (``origin/main:src/reyn/config/chat.py:1093``
+-- the field's own default is ``False``, meaning the shipped default is
+litellm's real ``token_counter`` BPE tokenizer, not chars/4). This
+matters here specifically because this test's oversized tail body is a
+run of ONE REPEATED CHARACTER (``"z" * n``) -- a real BPE tokenizer
+compresses a long repeated-character run far below one token per 4
+characters, so counted under the SHIPPED default this same string would
+land nowhere near 75% of T_max. chars/4 is not incidental plumbing here;
+it is what makes a boundary reachable at all with a body this cheap to
+construct (an equally-large body of genuinely varied text would reach
+the same boundary under the real tokenizer too, but is far more
+expensive to build and does not change what this test proves). So: the
+"~75% of T_max" this test reaches is a REAL relative-size boundary
+against a REAL T_max, but under the chars/4 estimator, not the shipped
+default's actual token count -- the owner's "ctx 75%" is being
+corroborated as a claim about the compaction MECHANISM firing at a
+realistic relative-size boundary, not as a claim that this exact
+synthetic body would count as 75% under production's real tokenizer.
+
 Real ``CompactionController``/``ChatMessage``/``EventLog``/
 ``CompactionConfig``/``CompactionEngine`` throughout (the REAL engine is
 constructed here, not a budget-stubbing subclass -- unlike
