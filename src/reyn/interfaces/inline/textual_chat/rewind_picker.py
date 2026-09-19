@@ -201,6 +201,28 @@ class RewindPicker(Vertical):
         otherwise eat as console markup.
         """
         self._set_title(default_scope)
+        # #6224 review: deliberately UNGUARDED, unlike this class's own
+        # ``_set_title``/``hide()`` siblings (both ``try/except: pass`` —
+        # "not composed yet" is a real, expected state for THOSE two: ``_set_
+        # title`` degrades to no title, and ``hide()`` is documented as
+        # called unguarded-by-design from the session-switch reset barrier,
+        # which can run before this widget ever composed). This method's
+        # entire job is different: it exists to PUT rows on screen, called
+        # only from :meth:`~reyn.interfaces.inline.textual_chat.app.
+        # TextualChatApp._handle_rewind_request`, itself only reached once
+        # this app is already running and the picker already composed — a
+        # ``NoMatches`` here is not an expected "too early" case, it is a
+        # real bug (a stale/renamed ID). Swallowing it the way the siblings
+        # do would leave the picker open (or never opened) with NO rows and
+        # NO error — "candidates don't show", the exact shape of the
+        # owner's #6224 report — and silently. Left to raise, it propagates
+        # to ``_handle_rewind_request``'s own caller, :meth:`~reyn.
+        # interfaces.inline.textual_chat.app.TextualChatApp._pump_frames`'s
+        # ``__rewind_list__`` leg, which already wraps that call in
+        # ``except Exception`` -> ``_record_pump_swallow`` — so a real
+        # failure here becomes the SAME visible ``frame pump: N swallowed —
+        # see log`` line an operator already knows to look for, rather than
+        # a second, quieter kind of nothing.
         options = self.query_one("#rewind-picker-options", OptionList)
         options.clear_options()
         self._seqs = [int(p["seq"]) for p in points if p.get("seq") is not None]
@@ -245,6 +267,12 @@ class RewindPicker(Vertical):
             return
 
         self._set_title(default_scope)
+        # #6224 review: same deliberate choice as :meth:`show_points`
+        # above (its own comment carries the full reasoning) — unguarded,
+        # not because it was missed but because letting it raise makes a
+        # real failure visible via the pump's ``_record_pump_swallow``
+        # counter, while swallowing it here would reproduce the owner's
+        # reported symptom silently.
         options = self.query_one("#rewind-picker-options", OptionList)
         options.clear_options()
         tree_rows = build_branch_tree_rows(branches, points)
