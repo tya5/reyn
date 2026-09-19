@@ -55,8 +55,8 @@ def test_real_subprocess_launch_reaches_the_target_path(tmp_path, monkeypatch):
     target = tmp_path / "report.pptx"
     target.write_text("fake pptx bytes")
 
-    ok = open_with_os_default(target)
-    assert ok is True
+    result = open_with_os_default(target)
+    assert result.state == "accepted"
 
     while not sink.exists():  # unbounded — CI's own timeout is the backstop
         time.sleep(0.05)
@@ -80,20 +80,34 @@ def test_fake_opener_sink_does_not_exist_mid_write(tmp_path, monkeypatch):
     resume_marker = tmp_path / "resume"
     opener_name = "open" if sys.platform == "darwin" else "xdg-open"
     script = bindir / opener_name
-    script.write_text(
-        "#!/bin/sh\n"
+    body = (
         f'echo "$1" > {sink_tmp}\n'
         f"touch {pause_marker}\n"
         f"while [ ! -f {resume_marker} ]; do sleep 0.02; done\n"
         f"mv {sink_tmp} {sink}\n"
     )
+    if sys.platform == "darwin":
+        # #6224: this module now waits on `open` itself (never on the app
+        # it launches — real `open` always forks and returns quickly). A
+        # faithful fake `open` must do the same: fork the actual work into
+        # the background and exit 0 immediately, or this test would hang
+        # inside `open_with_os_default`'s own `communicate()`.
+        # Redirect the backgrounded subshell's own stdout/stderr away from
+        # the inherited pipe — otherwise it keeps that pipe's write end
+        # open after the parent script exits, and `communicate()`'s own
+        # `stderr.read()` blocks on EOF until the background job finishes
+        # (defeating the fork-and-return-quickly premise this test exists
+        # to exercise).
+        script.write_text(f"#!/bin/sh\n( {body} ) >/dev/null 2>&1 &\nexit 0\n")
+    else:
+        script.write_text(f"#!/bin/sh\n{body}")
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
     target = tmp_path / "report.pptx"
     target.write_text("fake pptx bytes")
 
-    ok = open_with_os_default(target)
-    assert ok is True
+    result = open_with_os_default(target)
+    assert result.state == "accepted"
 
     while not pause_marker.exists():  # unbounded — CI's own timeout is the backstop
         time.sleep(0.02)
@@ -110,9 +124,73 @@ def test_fake_opener_sink_does_not_exist_mid_write(tmp_path, monkeypatch):
     assert sink.read_text().strip() == str(target)
 
 
-def test_returns_false_when_the_opener_binary_is_missing(monkeypatch, tmp_path):
-    """Tier 1: no opener on PATH at all — Popen raises FileNotFoundError,
-    caught and reported as False, never propagated to the caller."""
+def test_returns_failed_when_the_target_does_not_exist(tmp_path):
+    """Tier 1: #6224 — the target file does not exist. Caught by the
+    pre-launch existence check (state ``"failed"``, a DEFINITE known
+    failure) rather than reaching the launcher at all, on every platform —
+    the launcher never even sees a nonexistent target."""
+    result = open_with_os_default(tmp_path / "does-not-exist.pptx")
+    assert result.state == "failed"
+    assert "does not exist" in (result.detail or "")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS-only rc/stderr branch")
+def test_darwin_opener_nonzero_exit_reports_failed_with_the_real_stderr(tmp_path, monkeypatch):
+    """Tier 2: #6224 — on macOS ONLY, this module waits on the launcher
+    (never the application it starts — see module docstring) and reports a
+    non-zero exit as ``"failed"`` with the REAL stderr text, rather than
+    the pre-fix behaviour of reporting `open` exiting non-zero as success."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "open"
+    script.write_text(
+        '#!/bin/sh\necho "No application knows how to open the file." 1>&2\nexit 1\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    target = tmp_path / "report.pptx"
+    target.write_text("fake pptx bytes")
+
+    result = open_with_os_default(target)
+    assert result.state == "failed"
+    assert "No application knows how to open" in (result.detail or "")
+
+
+@pytest.mark.skipif(
+    sys.platform in ("darwin", "win32"), reason="xdg-open-specific non-wait property"
+)
+def test_linux_opener_is_never_waited_on(tmp_path, monkeypatch):
+    """Tier 2: #6224's ② — the DUAL of the darwin test above: on Linux this
+    module must return WITHOUT waiting for ``xdg-open`` to exit, because a
+    real ``xdg-open`` can stay attached to a terminal-based handler and
+    never return at all (electron/electron#10902). A fake opener that
+    blocks until a resume marker appears must not make this call block —
+    if it did, this test would hang until CI's own --timeout kills it."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    resume_marker = tmp_path / "resume"
+    script = bindir / "xdg-open"
+    script.write_text(
+        f"#!/bin/sh\nwhile [ ! -f {resume_marker} ]; do sleep 0.02; done\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    target = tmp_path / "report.pptx"
+    target.write_text("fake pptx bytes")
+
+    result = open_with_os_default(target)  # must return immediately
+    assert result.state == "accepted"
+    resume_marker.touch()  # let the still-running fake opener exit, cleanup
+
+
+def test_returns_failed_when_the_opener_binary_is_missing(monkeypatch, tmp_path):
+    """Tier 1: #6224 — no opener on PATH at all. The pre-launch
+    ``shutil.which`` check catches this deterministically (state
+    ``"failed"``) before ever attempting ``Popen`` — a real target, just
+    no opener to hand it to."""
+    target = tmp_path / "whatever.pptx"
+    target.write_text("real bytes, so only the opener-missing branch fires")
     monkeypatch.setenv("PATH", str(tmp_path))  # an empty directory, no opener binaries
-    ok = open_with_os_default(tmp_path / "whatever.pptx")
-    assert ok is False
+    result = open_with_os_default(target)
+    assert result.state == "failed"
+    assert "not found on PATH" in (result.detail or "")
