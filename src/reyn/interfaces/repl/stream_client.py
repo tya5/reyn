@@ -324,7 +324,15 @@ async def run_output_loop(
         elif msg.kind == "__copy_last_reply__":
             # /copy sentinel: resolve + copy, then render the result as a status
             # line instead of the (unhandled) sentinel — no more silent no-op.
-            msg = await handle_copy_sentinel(recent_replies, msg.text)
+            # #6230 stage 1: the control arg lives in ``meta["arg"]`` now —
+            # ``text`` carries a human-readable fallback for a surface with
+            # no reyn-specific handler, never the value THIS (reyn-aware)
+            # consumer acts on. ``.get`` (not indexing) tolerates a
+            # wire-reconstructed frame (``from_wire``) whose ``meta`` never
+            # carried the key.
+            msg = await handle_copy_sentinel(
+                recent_replies, (msg.meta or {}).get("arg", "")
+            )
         elif msg.kind == "__rewind_list__":
             # /rewind picker (F4): the LOCAL inline path shows a ↑↓ region selector
             # (driven by session.pending_command_ui), so skip the text list there;

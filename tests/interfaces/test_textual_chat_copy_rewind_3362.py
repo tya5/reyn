@@ -313,16 +313,51 @@ async def test_copy_sentinel_writes_the_reply_to_the_clipboard(clipboard) -> Non
 @pytest.mark.asyncio
 async def test_copy_targets_an_older_reply_by_number(clipboard) -> None:
     """Tier 2: ``/copy 2`` copies the reply one turn back, not the newest —
-    the ring is ordered, not a single-slot latch."""
+    the ring is ordered, not a single-slot latch.
+
+    #6230 stage 1: the control arg the app acts on lives in
+    ``meta["arg"]`` now, not ``text`` (``text`` is a human-readable
+    fallback for a surface with no reyn-specific handler) — this sentinel
+    is built the post-stage-1 way, matching what ``copy_cmd`` now emits."""
     transport = ScriptedTransport([
         OutboxMessage(kind="agent", text="older reply"),
         OutboxMessage(kind="agent", text="newest reply"),
-        OutboxMessage(kind="__copy_last_reply__", text="2"),
+        OutboxMessage(
+            kind="__copy_last_reply__", text="copy request: 2", meta={"arg": "2"},
+        ),
     ])
     app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
     async with app.run_test() as pilot:
         await _settle(pilot, until=lambda: clipboard() is not None)
         assert clipboard() == "older reply"
+
+
+@pytest.mark.asyncio
+async def test_copy_reads_the_arg_from_meta_not_text(clipboard) -> None:
+    """Tier 2: the app targets the reply named by ``meta["arg"]`` even when
+    ``text`` holds an unrelated human-readable sentence — proving the two
+    are genuinely separate channels, not merely "still happens to work"
+    (a sentinel whose ``text`` still secretly carried the control value
+    would pass :func:`test_copy_targets_an_older_reply_by_number` above
+    too; only a MISMATCHED pair distinguishes "reads meta" from "reads
+    text and meta agreed by construction"). #6230 stage 1."""
+    transport = ScriptedTransport([
+        OutboxMessage(kind="agent", text="older reply"),
+        OutboxMessage(kind="agent", text="newest reply"),
+        OutboxMessage(
+            kind="__copy_last_reply__",
+            text="this sentence is not a control value",
+            meta={"arg": "2"},
+        ),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot, until=lambda: clipboard() is not None)
+        assert clipboard() == "older reply", (
+            "the app must resolve the copy target from meta['arg'], never "
+            "from text — text is human-readable prose now, not a control "
+            "value"
+        )
 
 
 @pytest.mark.asyncio

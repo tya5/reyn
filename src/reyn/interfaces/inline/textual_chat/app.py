@@ -8082,7 +8082,17 @@ class TextualChatApp(App):
                         # status line).
                         elif msg.kind == "__copy_last_reply__":
                             try:
-                                await self._handle_copy_request(msg.text)
+                                # #6230 stage 1: the control arg lives in
+                                # ``meta["arg"]`` now — ``text`` carries a
+                                # human-readable fallback for a surface with
+                                # no reyn-specific handler, never the value
+                                # THIS (reyn-aware) consumer acts on. ``.get``
+                                # (not indexing) tolerates a wire-reconstructed
+                                # frame (``from_wire``) whose ``meta`` never
+                                # carried the key.
+                                await self._handle_copy_request(
+                                    (msg.meta or {}).get("arg", "")
+                                )
                             except Exception as exc:
                                 logger.exception("textual chat: /copy sentinel failed")
                                 self._record_pump_swallow("__copy_last_reply__", exc)
@@ -8094,7 +8104,11 @@ class TextualChatApp(App):
                                 self._record_pump_swallow("__rewind_list__", exc)
                         elif msg.kind == "__open_artifact__":
                             try:
-                                await self._handle_open_artifact_request(msg.text)
+                                # #6230 stage 1: same split as /copy above —
+                                # the ref lives in ``meta["ref"]``, not ``text``.
+                                await self._handle_open_artifact_request(
+                                    (msg.meta or {}).get("ref", "")
+                                )
                             except Exception as exc:
                                 logger.exception("textual chat: /open sentinel failed")
                                 self._record_pump_swallow("__open_artifact__", exc)
