@@ -565,6 +565,17 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "control_ir_skipped",
     "cron_fired",
     "direct_alias_call_salvaged",
+    # #6230 stage 2: a display-frame `kind` outside the closed display
+    # vocabulary (`reyn.runtime.outbox.DISPLAY_KINDS`) reached a renderer
+    # -- the witness the stage's own legible degrade must not remove (see
+    # `reyn.interfaces.repl.renderer.record_unknown_kind_frame`'s own
+    # docstring for exactly which fields this carries and why). First
+    # occurrence per DISTINCT kind only, the SAME bounded-by-key shape
+    # `pump_exception_swallowed` established below -- no
+    # EVENT_AUDIT_REQUIREMENTS entry, matching that sibling's own
+    # precedent (this registry's own module docstring: field requirements
+    # are a SUBSET of the vocabulary, not mandatory for every kind).
+    "display_frame_unknown_kind",
     "embed_attempts",
     "embed_cancelled",
     "embed_secret_redacted",

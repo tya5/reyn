@@ -81,6 +81,7 @@ control_ir_failed
 control_ir_skipped
 cron_fired
 direct_alias_call_salvaged
+display_frame_unknown_kind
 embed_attempts
 embed_cancelled
 embed_secret_redacted
@@ -859,6 +860,39 @@ reused one id across many rounds must not flood `.reyn/events`).
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
 | `call_parent_registration_collided` | `_register_call_parent` saw a `call_id` already present in `_call_parents` — a SECOND `kind="agent"` row registering under an id already claimed by an earlier one. Fires only on the FIRST time a given `call_id` collides this process (`_call_parent_collisions_seen`, process-lifetime — not per-session, since this is a diagnostic about whether the defect has EVER been observed). The overwrite itself is UNCHANGED: `_call_parents[call_id]` still ends up pointing at the LATEST entry. Best-effort (`emit_cli_event`, the same choice/posture `pump_exception_swallowed` made): an emit failure here is logged and swallowed, never propagated into registration. | `call_id` (the colliding value) |
+
+## Unknown display-frame kind
+
+`display_frame_unknown_kind` (#6230 stage 2) is the witness that a display
+frame's `kind` fell outside the closed display vocabulary
+(`reyn.runtime.outbox.DISPLAY_KINDS`) when a renderer received it —
+`reyn.runtime.outbox.is_unknown_kind` is the check (re-imported by
+`reyn.interfaces.repl.renderer` for its existing callers), wired into
+both `TextualChatApp._ingest_frame` (the inline TUI's pump) and
+`stream_client.py`'s `_render_display_message` (the plain `--cui` output
+loop). This exists so the SAME stage's own legible-degrade fix (an
+unrecognized kind now renders a readable line instead of raising, or
+showing nothing) cannot also make a routing defect invisible: before this
+stage, an unrecognized kind either raised (caught and logged, but with no
+structured record of WHICH kind or WHERE) or, for the remote/web path,
+was silently dropped — either way, an operator investigating a report like
+"I saw a garbled row" had no durable trail to start from (the concrete
+gap #6234's own dead-ended investigation demonstrated: a record naming the
+exception TYPE but not a POSITION).
+
+The SAME bounded-by-key shape `pump_exception_swallowed`/
+`call_parent_registration_collided` above established (one event per
+FIRST occurrence of a given `kind`, never per occurrence — a mis-routed
+producer emitting the same wrong kind on every frame must not flood
+`.reyn/events`), via a SIBLING stats class
+(`reyn.interfaces.repl.renderer.UnknownKindStats`) rather than a reuse of
+`PumpSwallowStats` — that class's own key is `(kind, exception type)`, and
+this event has no exception at all (the whole point of the stage: an
+unrecognized kind renders instead of raising).
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `display_frame_unknown_kind` | A renderer (`_ingest_frame` / `_render_display_message`) received a `kind` outside `DISPLAY_KINDS`. Fires only on the FIRST time a given `kind` is seen this process (`UnknownKindStats.record`). Best-effort (`emit_cli_event`, the same choice/posture `pump_exception_swallowed` made): an emit failure here is logged and swallowed, never propagated into rendering. | `frame_kind` (the unrecognized `kind` itself), `ui_surface` (`"textual_chat"` \| `"plain_cui"` — which renderer caught it; named `ui_surface`, not `surface`, because `emit_cli_event` already stamps its own `surface="cli"` on every event it emits, and a same-named payload key collides), `transport_kind` (`type(transport).__name__` — the nearest fact this layer has for "where it arrived from"; a remote PEER or client BUILD identifier would answer that more precisely but neither is obtainable at this layer, disclosed rather than fabricated), `detected_at` (`file:line` of the call site, captured dynamically via `inspect.stack()` so it can never drift from the code that actually classified the kind — the POSITION #6234's own dead-ended investigation lacked) |
 
 ## Replay
 
