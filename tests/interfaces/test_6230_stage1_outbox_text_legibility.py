@@ -21,10 +21,10 @@ Real instances throughout — no ``MagicMock``/``AsyncMock``/``patch``.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import stat
 import sys
-import time
 
 import pytest
 
@@ -131,8 +131,11 @@ async def test_app_reads_open_artifact_ref_from_meta_not_text(tmp_path, monkeypa
         ))
         await pilot.pause()
 
-        while not sink.exists():  # unbounded — CI's own timeout is the backstop
-            time.sleep(0.05)
+        # Unbounded — CI's own --timeout=120 is the kill switch (testing.md
+        # ceiling rule). ``asyncio.sleep(0)`` is a cooperative yield, not a
+        # wait duration this assertion depends on.
+        while not sink.exists():
+            await asyncio.sleep(0)
         assert sink.read_text().strip() == str(target), (
             "the app must resolve the opened artifact from meta['ref'], "
             "never from text"
