@@ -4286,10 +4286,18 @@ class TextualChatApp(App):
                 kind="status", text=f"could not write a temp file for {row.name!r}: {exc}",
             ))
             return
-        ok = open_with_os_default(temp_path)
-        if not ok:
+        result = open_with_os_default(temp_path)
+        # "accepted" is deliberately silent — never a success claim (#6224:
+        # see OpenResult's own docstring for why it stays non-committal).
+        if result.state != "accepted":
+            # Lead with the REAL reason (#6224 review): naming "no OS
+            # opener available" first states a cause that is false for 3
+            # of this branch's 4 reachable failures (target missing /
+            # macOS rc != 0 with its own stderr / a launch exception) —
+            # only detail's absence falls back to a generic phrase.
+            reason = result.detail or "no OS opener available"
             self._ingest_frame(OutboxMessage(
-                kind="status", text=f"could not open {row.name} — no OS opener available",
+                kind="status", text=f"could not open {row.name} — {reason}",
             ))
 
     def action_jump_to_latest(self) -> None:
@@ -5286,10 +5294,14 @@ class TextualChatApp(App):
                 kind="status", text=f"artifact not found (ref={ref})",
             ))
             return
-        ok = open_with_os_default(resolved)
-        if not ok:
+        result = open_with_os_default(resolved)
+        # "accepted" is deliberately silent — never a success claim (#6224:
+        # see OpenResult's own docstring for why it stays non-committal).
+        if result.state != "accepted":
+            # Lead with the REAL reason — see the sibling call site above.
+            reason = result.detail or "no OS opener available"
             self._ingest_frame(OutboxMessage(
-                kind="status", text=f"could not open {resolved.name} — no OS opener available",
+                kind="status", text=f"could not open {resolved.name} — {reason}",
             ))
 
     async def _clear_pending_command_ui_over_wire(self) -> None:
