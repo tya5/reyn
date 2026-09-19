@@ -46,8 +46,6 @@ The trade-off is explicit: **predictability and auditability over maximum autono
 ## See it
 
 <!--
-  Demo slot. Interim: placeholder images render inline below.
-  TODO(tui-coder): drop real PNGs at docs/assets/screenshots/{tui-chat,tui-right-panel,tui-rewind}.png
   TODO(vhs, later): replace the hero placeholder with docs/assets/demo/reyn-chat.gif (vhs .tape script tracked separately)
 -->
 
@@ -58,7 +56,7 @@ The trade-off is explicit: **predictability and auditability over maximum autono
 
 <sub><code>reyn chat</code> — ask, get a streamed reply. (Animated walkthrough via vhs coming.)</sub>
 
-| Cost &amp; token transparency (`Ctrl+B`) | Time-travel (`/rewind`) |
+| Cost &amp; token transparency (bottom menu bar → `Cost` tab) | Time-travel (`/rewind`) |
 |---|---|
 | <img src="docs/assets/screenshots/tui-right-panel.png" alt="Cost panel: today / all-time tokens and dollar cost, broken down by agent and model" width="400"> | <img src="docs/assets/screenshots/tui-rewind.png" alt="Rewind picker: checkpoint timeline with a branch tree to jump back and fork" width="400"> |
 
@@ -215,7 +213,7 @@ Reyn both consumes external tools and exposes itself to other systems over stand
 
 - **MCP** — talk to a Reyn agent from any MCP client (Claude Desktop, Claude Code, Cursor, …) via `reyn web` (SSE) or `reyn mcp serve` (stdio). See [`reyn mcp` reference](docs/reference/cli/mcp.md).
 - **A2A** — expose Reyn agents as addressable A2A peers for other agents to discover and converse with, including async tasks and mid-run `ask_user`. See [A2A concepts](docs/concepts/multi-agent/a2a.md).
-- **Self-reading** — the agent can browse its own repository (`reyn_src_list` / `reyn_src_read`) to answer "how does Reyn work?" from source.
+- **Self-reading** — the agent can browse its own repository (`reyn_repo_list` / `reyn_repo_read`) to answer "how does Reyn work?" from source.
 
 ---
 

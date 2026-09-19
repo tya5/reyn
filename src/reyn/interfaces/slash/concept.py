@@ -145,10 +145,15 @@ def _lookup(
 
 # ── slash command ──────────────────────────────────────────────────────────
 
-_GLOSSARY_PATH_HINT = (
-    "Full glossary: Ctrl+B → Docs → "
-    "reference/glossary"
-)
+# #6223: was "Ctrl+B → Docs → reference/glossary" — neither Ctrl+B nor a
+# "Docs" drawer tab exist (Ctrl+B was retired, #2193 rescope; the drawer's
+# tabs are Model/Agent/Hist/Art/Cost/Ctx/Tool/MCP/Skill/Pipe/Hook/Cron/Task —
+# see chrome.py's own MENU_TABS). The real, unambiguous path is the repo
+# file this module's own docstring already names.
+# .as_posix(): this is prose the user reads, not a filesystem call — a
+# literal path they can locate in the repo or on GitHub, so it must read
+# the same on every platform (never a Windows "\"-separated Path str()).
+_GLOSSARY_PATH_HINT = f"Full glossary: {_GLOSSARY_REL.as_posix()}"
 
 
 @slash(
