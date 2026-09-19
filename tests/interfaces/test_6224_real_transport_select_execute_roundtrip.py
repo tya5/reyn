@@ -51,6 +51,22 @@ The only substituted thing is the OS opener binary itself (a fake script on
 ``PATH`` — the same technique ``test_artifact_list_and_open_4482.py`` and
 ``test_copy_mode_3507.py`` already use; launching a real external
 application from a test is neither possible nor desirable).
+
+Strip-falsify (lead-coder's own read of the code, #6227): with
+``transport.start()`` skipped, BOTH tests genuinely **hang** — killed by
+CI's own ``--timeout``, not a clean assertion failure. This is correct per
+testing.md's ceiling rule (wait unbounded, let CI's kill switch be the
+ceiling) and is the real witness: nothing else in either test would make
+its own unbounded ``while`` loop exit. (An earlier version of this
+docstring claimed "clean failure, not a hang" — that was true only while
+the polling loops still carried a self-imposed ``deadline``, which the
+suspected-time-dependence gate correctly flagged and which was removed;
+the claim was not re-verified after that edit. Corrected here.)
+
+Four private-attribute reads have no public alternative (`_ingest_frame`,
+`_open_drawer`, `_artifact_rows_cache`, `registry._dir`) — their absence
+from the public surface is itself the finding (testing.md's own private-
+state rule), not an oversight.
 """
 from __future__ import annotations
 
@@ -78,7 +94,6 @@ from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from tests._support.agent_session import make_session
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
-_WAIT_S = 20.0
 _REPLY = "acknowledged"
 
 
@@ -124,18 +139,18 @@ def _build_registry(tmp_path: Path) -> AgentRegistry:
     return registry
 
 
-async def _await_reply(registry: AgentRegistry, *, contains: str) -> "str | None":
-    async def _drain() -> str:
-        while True:
-            msg = await registry.repl_outbox.get()
-            text = str(getattr(msg, "text", "") or "")
-            if contains in text:
-                return text
-
-    try:
-        return await asyncio.wait_for(_drain(), timeout=_WAIT_S)
-    except asyncio.TimeoutError:
-        return None
+async def _await_reply(registry: AgentRegistry, *, contains: str) -> str:
+    """Unbounded — CI's own ``--timeout=120`` is the kill switch (testing.md
+    ceiling rule), no self-imposed ``wait_for(timeout=...)``. Reads
+    ``registry.repl_outbox`` directly (never through the transport), which
+    matters for the strip-falsify note on the caller: a turn's own reply
+    reaches here regardless of whether ``InProcessTransport.start()`` was
+    called."""
+    while True:
+        msg = await registry.repl_outbox.get()
+        text = str(getattr(msg, "text", "") or "")
+        if contains in text:
+            return text
 
 
 async def _run_one_turn(registry: AgentRegistry, session) -> None:
@@ -144,9 +159,7 @@ async def _run_one_turn(registry: AgentRegistry, session) -> None:
     self-imposed deadline here."""
     before = len(registry.list_rewind_points())
     await session.submit_user_text("turn 0")
-    assert await _await_reply(registry, contains=_REPLY) is not None, (
-        "the scripted turn never produced a reply"
-    )
+    await _await_reply(registry, contains=_REPLY)
     while len(registry.list_rewind_points()) <= before:
         await asyncio.sleep(0.05)
 
