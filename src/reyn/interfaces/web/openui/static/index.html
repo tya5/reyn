@@ -209,8 +209,13 @@
   // Python surfaces use (reyn.interfaces.repl.renderer.legible_degrade_text)
   // — a JS port, not a shared import (this file has no module loader for a
   // Python source). Three tiers: `text` if non-empty; else a line naming
-  // `kind`; else a fixed line. Kept in sync BY HAND with the Python version
-  // if either changes shape (no shared source across the language boundary).
+  // `kind`; else a fixed line. A wording or tier-order edit on EITHER side
+  // alone goes RED — enforced by
+  // tests/interfaces/test_browser_reyn_decode_tripwire.py, which
+  // regex-extracts this function's literal wording and asserts it against
+  // the REAL Python function's own output (the SAME tripwire shape this
+  // file's _reyn field-name decode already uses; a "keep in sync by hand"
+  // comment is exactly what that gate exists to replace).
   function _legibleDegradeText(kind, text) {
     if (text) return text;
     if (kind) return "(unrecognized frame: kind=" + JSON.stringify(kind) + ", no text)";
