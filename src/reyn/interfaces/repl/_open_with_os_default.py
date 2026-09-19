@@ -72,6 +72,12 @@ hardware measurement (lead-coder, #6224) confirms `open` always forks and
 returns quickly across all 3 failure shapes tested, so waiting on IT
 (never on the application it launches) is safe, and its exit code +
 stderr are surfaced via `OpenResult.detail`.
+
+Because the pre-launch existence check above is not URL-aware, this
+function accepts only an EXISTING LOCAL filesystem path — never a URL,
+unlike `gx` above, which also opens those. A URL reaches that check first
+and fails as `"failed"` with a misleading `'...' does not exist` reason,
+never as an OS-native URL open.
 """
 from __future__ import annotations
 
