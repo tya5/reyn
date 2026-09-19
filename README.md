@@ -58,7 +58,7 @@ The trade-off is explicit: **predictability and auditability over maximum autono
 
 | Cost &amp; token transparency (bottom menu bar → `Cost` tab) | Time-travel (`/rewind`) |
 |---|---|
-| <img src="docs/assets/screenshots/tui-right-panel.png" alt="Cost panel: today / all-time tokens and dollar cost, broken down by agent and model" width="400"> | <img src="docs/assets/screenshots/tui-rewind.png" alt="Rewind picker: checkpoint timeline with a branch tree to jump back and fork" width="400"> |
+| <img src="docs/assets/screenshots/tui-right-panel.png" alt="Cost panel: session / agent / project cost broken into input, output and cache savings, plus cumulative token counts and cache hit rate" width="400"> | <img src="docs/assets/screenshots/tui-rewind.png" alt="Rewind picker: checkpoint timeline with a branch tree to jump back and fork" width="400"> |
 
 </div>
 
