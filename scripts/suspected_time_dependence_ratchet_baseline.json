@@ -145,6 +145,7 @@
     "tests/interfaces/test_3595_s5_session_does_not_interpret_text.py": 1,
     "tests/interfaces/test_4464_image_prep_off_thread_and_indicator.py": 2,
     "tests/interfaces/test_4751_intervention_panel_hotkeys.py": 1,
+    "tests/interfaces/test_6224_real_transport_select_execute_roundtrip.py": 3,
     "tests/interfaces/test_a2a_limit_iv_dispatch_1493.py": 1,
     "tests/interfaces/test_activity_row_3693.py": 1,
     "tests/interfaces/test_artifact_list_and_open_4482.py": 2,
