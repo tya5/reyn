@@ -13,21 +13,23 @@ names the browser's decode function reads and asserts each is a key the real
 ``_encode_display`` puts on its ``_reyn`` block. Rename a field on ONE side only
 ⇒ RED. Real encoder output; no mocks.
 
-#6230 stage 2 extends this SAME tripwire (not a new mechanism — PR #6238
-review, lead-coder) to the browser's ``_legibleDegradeText`` — a hand-ported
-JS twin of :func:`reyn.interfaces.repl.renderer.legible_degrade_text`, with no
-shared source across the language boundary. A comment asking a future editor
-to "keep the two in sync" is exactly what this repo already rejected once for
-the field-rename case above (a comment cannot be enforced); the fix is the
-same shape as the rest of this file — regex-extract the JS literal wording
-and assert it against the REAL Python function's own output, so a one-sided
-edit to either side's wording goes RED instead of silently drifting.
+#6230 stage 2 (PR #6238 review, architect + lead-coder): the browser's own
+"never empty" degrade first landed as a JS twin of
+:func:`reyn.interfaces.repl.renderer.legible_degrade_text` here — a hand
+duplication this exact tripwire file would then have needed extending to
+cover. Instead, the guarantee moved to the SOURCE of the wire text
+(:func:`~reyn.interfaces.transport.agui.protocol._encode_display`, scoped to
+CUSTOM-mapped kinds only — see ``test_encode_display_custom_kind_text``
+below), so the browser has nothing of its own left to drift: it reads
+``reyn.text`` (a plain passthrough) same as every other field this file
+already tripwires. The last test in this file asserts the JS-side degrade
+function is genuinely GONE, not merely unused, so a future re-add doesn't
+silently reintroduce the duplication this stage removed.
 """
 from __future__ import annotations
 
 import re
 
-from reyn.interfaces.repl.renderer import legible_degrade_text
 from reyn.interfaces.transport.agui.protocol import _encode_display
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -87,89 +89,69 @@ def test_browser_reads_the_reyn_block_and_display_frame_tag() -> None:
     )
 
 
-def _browser_degrade_fn() -> str:
-    """The body of the browser's ``_legibleDegradeText`` — the JS port of
-    :func:`~reyn.interfaces.repl.renderer.legible_degrade_text`."""
+def test_encode_display_fills_empty_text_only_for_a_custom_mapped_kind() -> None:
+    """Tier 2: #6230 stage 2 item 3 (architect ruling, PR #6238 review) —
+    ``_encode_display`` guarantees non-empty ``text`` ONLY for a
+    CUSTOM-mapped kind (a reyn-private kind with no OTHER standard field a
+    generic client could fall back to — presentation/trace/intervention/
+    control sentinels). Real encoder call, real wire-reconstructed
+    ``OutboxMessage`` (``from_wire`` — the actual untrusted-kind
+    construction path), no mocks."""
+    # "__totally_unknown__" is not in DISPLAY_KINDS -> CUSTOM-mapped.
+    msg = OutboxMessage.from_wire(kind="__totally_unknown__", text="")
+    ev = _encode_display(DisplayFrame(msg))
+    assert ev.data["_reyn"]["text"], (
+        "a CUSTOM-mapped kind's empty text must be filled at the wire source"
+    )
+    assert ev.data["value"]["text"] == ev.data["_reyn"]["text"], (
+        "the standard CUSTOM envelope and the _reyn reconstruction block "
+        "must carry the SAME (already-degraded) text — a generic client "
+        "reading `value.text` and a reyn client reading `_reyn.text` must "
+        "see identical content"
+    )
+
+
+def test_encode_display_never_fills_a_standard_kinds_legitimately_empty_text() -> None:
+    """Tier 2: falsification pair for the test above — a STANDARD-mapped
+    kind's (``agent``/``status``/``reasoning``/``error``) empty ``text``
+    is a legitimate state (e.g. an LLM turn that produced no text content)
+    and must reach the wire UNTOUCHED, never fabricated into a fake
+    "unreadable frame" line. Without this pair, the previous test alone
+    would not distinguish "the guarantee correctly targets CUSTOM only"
+    from "it fills every empty text, including a real empty reply" — the
+    exact overreach the architect's review caught.
+
+    Strip-falsify (observed): widening ``_encode_display``'s own guard
+    from ``ag_type is CUSTOM`` to an unconditional ``True`` makes this
+    test fail cleanly — the real fabricated fallback line appears where
+    ``""`` was expected (``AssertionError: ... == '(unrecognized frame:
+    kind=\\'agent\\', no text)' == ''``), never a hang. Reverted, reran,
+    green."""
+    msg = OutboxMessage(kind="agent", text="")
+    ev = _encode_display(DisplayFrame(msg))
+    assert ev.data["_reyn"]["text"] == "", (
+        "a standard-mapped kind's empty text must pass through unmodified"
+    )
+    assert ev.data["delta"] == "", (
+        "the standard TEXT_MESSAGE_CONTENT envelope must also see the "
+        "real, unmodified (possibly empty) text"
+    )
+
+
+def test_browser_no_longer_carries_its_own_degrade_logic() -> None:
+    """Tier 2: #6230 stage 2's own drift-elimination witness — the JS
+    ``_legibleDegradeText`` function this stage first added (a hand-ported
+    twin of ``legible_degrade_text``, the thing THIS file's other tests
+    exist to catch drift in) must be GONE, not merely unused: the
+    guarantee it duplicated now lives once, server-side, in
+    ``_encode_display`` (see the two tests above). If a future edit
+    re-adds a JS-side degrade function, this goes RED as a prompt to
+    re-read this stage's own reasoning before reintroducing the
+    duplication it removed."""
     html = _INDEX_HTML.read_text(encoding="utf-8")
-    m = re.search(r"function _legibleDegradeText\(kind, text\) \{(.*?)\n  \}", html, re.DOTALL)
-    assert m, "could not locate _legibleDegradeText in index.html (degrade moved?)"
-    return m.group(1)
-
-
-def test_browser_degrade_tier3_fixed_line_matches_python_byte_for_byte() -> None:
-    """Tier 2: #6230 stage 2's own drift tripwire — the browser's tier-3
-    (``kind`` AND ``text`` both empty) fixed line, regex-extracted from the
-    JS source, must be BYTE-IDENTICAL to the REAL Python
-    ``legible_degrade_text("", "")`` output. The two languages compute
-    this string independently (no shared source); only a literal
-    comparison against the real function call — not a re-typed expected
-    string — proves neither side edited its own copy alone.
-
-    Strip-falsify (observed): appending ", DRIFTED" to ONLY the JS tier-3
-    literal makes this test (and the tier-order test below, since its own
-    tier-3 regex no longer matches either) fail cleanly with the exact
-    two strings shown in the assertion message — never a hang, since
-    nothing here waits on anything. Reverted, reran, green."""
-    fn = _browser_degrade_fn()
-    # The LAST `return "...";` in the function body — `_browser_degrade_fn`
-    # already stripped the function's own closing brace, so the fixed-line
-    # return is simply the final statement (no trailing brace to anchor on).
-    m = re.search(r'return "([^"]*)";\s*$', fn)
-    assert m, "could not locate the tier-3 fixed-line return in _legibleDegradeText"
-    js_fixed_line = m.group(1)
-
-    python_output = legible_degrade_text("", "")
-    assert js_fixed_line == python_output, (
-        f"browser tier-3 fixed line {js_fixed_line!r} != Python's real "
-        f"legible_degrade_text('', '') output {python_output!r} — wording drift"
-    )
-
-
-def test_browser_degrade_tier2_wording_matches_python_around_the_kind() -> None:
-    """Tier 2: same drift check for tier 2 (``kind`` named, ``text``
-    empty). The wording OUTSIDE the interpolated kind value must be
-    byte-identical on both sides; the interpolation itself is NOT
-    compared (Python's ``!r`` produces single-quoted repr,
-    ``JSON.stringify`` produces double-quoted JSON — a genuine,
-    unavoidable per-language convention difference, not wording this
-    tripwire's job to unify)."""
-    fn = _browser_degrade_fn()
-    m = re.search(
-        r'if \(kind\) return "([^"]*)" \+ JSON\.stringify\(kind\) \+ "([^"]*)";', fn,
-    )
-    assert m, "could not locate the tier-2 kind-naming line in _legibleDegradeText"
-    js_prefix, js_suffix = m.group(1), m.group(2)
-
-    python_output = legible_degrade_text("__some_kind__", "")
-    assert python_output.startswith(js_prefix), (
-        f"browser tier-2 prefix {js_prefix!r} does not match the start of "
-        f"Python's real output {python_output!r} — wording drift"
-    )
-    assert python_output.endswith(js_suffix), (
-        f"browser tier-2 suffix {js_suffix!r} does not match the end of "
-        f"Python's real output {python_output!r} — wording drift"
-    )
-    assert "__some_kind__" in python_output, (
-        "sanity: the kind itself must still appear somewhere in Python's "
-        "own tier-2 output"
-    )
-
-
-def test_browser_degrade_has_the_same_three_tiers_in_the_same_order_as_python() -> None:
-    """Tier 2: structural parity between the two ports — both try ``text``
-    first, then ``kind``, then the fixed fallback, in that order. Catches
-    a REORDERED or a DROPPED tier on the JS side even in the (impossible
-    by construction, but not by this test alone) case where each tier's
-    own wording still happened to match."""
-    fn = _browser_degrade_fn()
-    tier1 = re.search(r"if \(text\) return text;", fn)
-    tier2 = re.search(r"if \(kind\) return", fn)
-    tier3 = re.search(r'return "\(an unreadable frame arrived\)";', fn)
-    assert tier1 and tier2 and tier3, (
-        "browser _legibleDegradeText must keep all 3 tiers "
-        "(text -> kind -> fixed fallback); one or more not found as expected"
-    )
-    assert tier1.start() < tier2.start() < tier3.start(), (
-        "browser _legibleDegradeText's 3 tiers are out of order relative "
-        "to the Python function they port (text -> kind -> fixed fallback)"
+    assert "_legibleDegradeText" not in html, (
+        "a JS degrade function reappeared in index.html — the whole point "
+        "of moving the guarantee into _encode_display was to leave nothing "
+        "in the browser that could drift out of wording-lockstep with the "
+        "Python function again"
     )

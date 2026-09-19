@@ -13,47 +13,20 @@ from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 
 from reyn.interfaces import palette
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.outbox import DISPLAY_KINDS, OutboxMessage
+from reyn.runtime.outbox import OutboxMessage, legible_degrade_text
+from reyn.runtime.outbox import is_unknown_kind as is_unknown_kind  # noqa: F401 — re-export, see below
+
+# `is_unknown_kind` / `legible_degrade_text` (#6230 stage 2) are DEFINED in
+# `reyn.runtime.outbox`, not here — that module is the shared runtime layer
+# both this presentation-layer module AND the wire codec
+# (`interfaces/transport/agui/protocol.py`) already depend on, so a pure
+# vocabulary function belongs there rather than being duplicated (PR #6238
+# review, architect + lead-coder). Imported here (not just used internally)
+# so every existing `from reyn.interfaces.repl.renderer import ...` call
+# site in this codebase (`app.py`, `stream_client.py`) keeps working
+# unchanged.
 
 _log = logging.getLogger(__name__)
-
-
-def legible_degrade_text(kind: str, text: str) -> str:
-    """#6230 stage 2 (issue thread ruling): the line a surface shows for a
-    frame it has no specific presentation for — including a ``kind`` it
-    does not recognize at all. Three tiers, tried in order, so the result
-    is STRUCTURALLY impossible to be empty (never "we call a function
-    that outputs text" — the invariant is enforced by this function's own
-    shape, not by hoping every caller remembers to check):
-
-    1. ``text`` is non-empty → shown verbatim (the common case: a real
-       reply, a real status line, or — since stage 1, #6235 — a sentinel's
-       own prepared human-readable fallback).
-    2. ``text`` is empty but ``kind`` is not → a line naming the kind, so
-       a reader at least knows WHAT arrived even with nothing to say
-       about it.
-    3. Both empty → a fixed line. This is the tier that makes "empty"
-       unreachable: there is no fourth case left to fall through.
-
-    ``OutboxMessage.from_wire``'s own docstring already states the
-    decision this makes true: an unknown wire kind "MUST degrade
-    gracefully (ignore-unknown), never fail-close" — this function is
-    what "gracefully" cashes out to at the point text actually reaches a
-    human, not a new decision.
-
-    ``__end__`` (the one CONTROL kind with ``text=""`` BY CONSTRUCTION,
-    ``transport/agui/endpoint.py``) never reaches this function: every
-    caller's own frame loop returns/breaks on ``kind == "__end__"``
-    before rendering anything (``textual_chat/app.py``'s pump,
-    ``repl/stream_client.py``'s output loop) — so tier 3 firing for
-    ``__end__`` specifically is structurally unreachable, not excluded by
-    a literal check here.
-    """
-    if text:
-        return text
-    if kind:
-        return f"(unrecognized frame: kind={kind!r}, no text)"
-    return "(an unreadable frame arrived)"
 
 
 @dataclass
@@ -155,24 +128,6 @@ def record_unknown_kind_frame(
             "kind=%r (diagnostic-only, never blocks rendering)",
             kind,
         )
-
-
-def is_unknown_kind(kind: str) -> bool:
-    """Whether *kind* falls outside the closed display vocabulary
-    (:data:`~reyn.runtime.outbox.DISPLAY_KINDS`) — the population
-    #6230 stage 2's degrade (:func:`legible_degrade_text`) and witness
-    (:func:`record_unknown_kind_frame`) exist for.
-
-    The three CONTROL kinds (``__end__`` / ``__copy_last_reply__`` /
-    ``__open_artifact__``) are intercepted BY NAME in each caller's own
-    frame loop before reaching a generic fallback (the pump's ``elif
-    msg.kind == "__copy_last_reply__"`` etc., ``__end__``'s own
-    loop-``break``/``return``) — this function is never evaluated for them
-    in practice. It answers the general question ("is this kind in the
-    closed vocabulary at all"), not "is this specifically one of the
-    sentinels callers already special-case by name."
-    """
-    return kind not in DISPLAY_KINDS
 
 
 def _meta_prefix(meta: dict) -> str:

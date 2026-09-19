@@ -108,6 +108,84 @@ CONTROL_KINDS: "frozenset[str]" = frozenset({
 # The complete closed vocabulary of valid OutboxMessage.kind values.
 VOCABULARY: "frozenset[str]" = DISPLAY_KINDS | CONTROL_KINDS
 
+
+def is_unknown_kind(kind: str) -> bool:
+    """Whether *kind* falls outside the closed display vocabulary
+    (:data:`DISPLAY_KINDS`) — the population #6230 stage 2's degrade
+    (:func:`legible_degrade_text`) and witness (``reyn.interfaces.repl.
+    renderer.record_unknown_kind_frame``) exist for.
+
+    The three CONTROL kinds (``__end__`` / ``__copy_last_reply__`` /
+    ``__open_artifact__``) are intercepted BY NAME in each caller's own
+    frame loop before reaching a generic fallback — this function is
+    never evaluated for them in practice. It answers the general
+    question ("is this kind in the closed vocabulary at all"), not "is
+    this specifically one of the sentinels callers already special-case
+    by name."
+
+    Lives here, not in ``interfaces/repl/renderer.py`` where it was first
+    drafted (PR #6238 review, architect + lead-coder): :func:`_encode_display`
+    (``interfaces/transport/agui/protocol.py``) needs it too, and that
+    module must not import ``renderer.py`` — a wire CODEC importing a
+    ``prompt_toolkit``-carrying presentation module is a layering
+    inversion this module (the shared runtime vocabulary both already
+    depend on) does not have. ``renderer.py`` re-exports this name so
+    every existing caller's import path is unchanged.
+    """
+    return kind not in DISPLAY_KINDS
+
+
+def legible_degrade_text(kind: str, text: str) -> str:
+    """#6230 stage 2 (issue thread ruling): the line a surface shows for a
+    frame it has no specific presentation for — including a ``kind`` it
+    does not recognize at all. Three tiers, tried in order, so the result
+    is STRUCTURALLY impossible to be empty (never "we call a function
+    that outputs text" — the invariant is enforced by this function's own
+    shape, not by hoping every caller remembers to check):
+
+    1. ``text`` is non-empty → shown verbatim (the common case: a real
+       reply, a real status line, or — since stage 1, #6235 — a sentinel's
+       own prepared human-readable fallback).
+    2. ``text`` is empty but ``kind`` is not → a line naming the kind, so
+       a reader at least knows WHAT arrived even with nothing to say
+       about it.
+    3. Both empty → a fixed line. This is the tier that makes "empty"
+       unreachable: there is no fourth case left to fall through.
+
+    ``OutboxMessage.from_wire``'s own docstring already states the
+    decision this makes true: an unknown wire kind "MUST degrade
+    gracefully (ignore-unknown), never fail-close" — this function is
+    what "gracefully" cashes out to at the point text actually reaches a
+    human, not a new decision.
+
+    ``__end__`` (the one CONTROL kind with ``text=""`` BY CONSTRUCTION,
+    ``transport/agui/endpoint.py``) never reaches this function: every
+    caller's own frame loop returns/breaks on ``kind == "__end__"``
+    before rendering anything (``textual_chat/app.py``'s pump,
+    ``repl/stream_client.py``'s output loop), and it is CONTROL-FILTERED
+    before ever reaching ``_encode_display`` on the wire path
+    (``transport/agui/emitter.py``'s ``CONTROL_FILTER_KINDS`` check) — so
+    tier 3 firing for ``__end__`` specifically is structurally
+    unreachable on every call site, not excluded by a literal check here.
+
+    Applied at TWO points, deliberately, not one (PR #6238 review,
+    architect + lead-coder): ⑴ ``_encode_display`` (the wire codec) so a
+    REMOTE consumer — a generic AG-UI client, or the openui browser —
+    never needs its own copy of this logic (a JS twin of this exact
+    function used to live in ``index.html`` and was removed once this
+    became the single source); ⑵ each IN-PROCESS renderer (the inline
+    TUI's presenter, the plain ``--cui`` renderers) still calls this
+    directly, because an in-process consumer never goes through
+    ``_encode_display`` at all — there is no single funnel upstream of
+    both.
+    """
+    if text:
+        return text
+    if kind:
+        return f"(unrecognized frame: kind={kind!r}, no text)"
+    return "(an unreadable frame arrived)"
+
+
 # #5047/#5057 (structural fix, architect's confirmed design — axis A): the
 # intervention-family kinds — every one of these REQUIRES
 # ``meta["intervention_id"]`` to be a genuine identity, checked by
@@ -702,4 +780,6 @@ __all__ = [
     "DISPLAY_KINDS",
     "CONTROL_KINDS",
     "VOCABULARY",
+    "is_unknown_kind",
+    "legible_degrade_text",
 ]
