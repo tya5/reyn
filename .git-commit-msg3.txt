@@ -1,0 +1,13 @@
+fix(#6230 stage 1): document the hang outcome in the test's own docstring
+
+Review point on PR #6235: the strip-falsify outcome for
+test_app_reads_open_artifact_ref_from_meta_not_text (a hang, not a
+clean assertion failure) lived only in the PR body. A future person
+who breaks this fix and sees the test freeze needs to read that as
+"I broke it", not "this test is flaky" -- so it belongs in the test's
+own docstring, matching #6227/#6233's own precedent.
+
+part of #6230
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019LZ2nN392xjGJNJzpCc8T5

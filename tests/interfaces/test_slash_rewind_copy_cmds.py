@@ -421,20 +421,41 @@ async def test_copy_emits_copy_sentinel_kind(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_copy_passes_args_verbatim_as_text(tmp_path: Path) -> None:
-    """Tier 2: /copy <N> puts the raw arg string in the sentinel's text field."""
+async def test_copy_passes_args_verbatim_in_meta(tmp_path: Path) -> None:
+    """Tier 2: /copy <N> puts the raw arg string in the sentinel's
+    ``meta["arg"]`` — the control channel a reyn-aware consumer reads
+    (#6230 stage 1: ``text`` is the human-readable fallback now, never
+    the control value; see the sibling text-legibility test below)."""
     reg = _make_registry(tmp_path)
     session = _spawn(reg, "alpha", "sess-1")
     ctx = _ctx(session)
     await copy_cmd(ctx, "2")
-    assert ctx.transport.texts("__copy_last_reply__") == ["2"]
+    [msg] = [m for m in ctx.transport.displayed if m.kind == "__copy_last_reply__"]
+    assert msg.meta["arg"] == "2"
 
 
 @pytest.mark.asyncio
-async def test_copy_list_arg_passes_through(tmp_path: Path) -> None:
-    """Tier 2: /copy list passes the 'list' token verbatim (the output loop validates)."""
+async def test_copy_list_arg_passes_through_in_meta(tmp_path: Path) -> None:
+    """Tier 2: /copy list puts the 'list' token verbatim in ``meta["arg"]``
+    (the output loop validates it) — #6230 stage 1."""
     reg = _make_registry(tmp_path)
     session = _spawn(reg, "alpha", "sess-1")
     ctx = _ctx(session)
     await copy_cmd(ctx, "list")
-    assert ctx.transport.texts("__copy_last_reply__") == ["list"]
+    [msg] = [m for m in ctx.transport.displayed if m.kind == "__copy_last_reply__"]
+    assert msg.meta["arg"] == "list"
+
+
+@pytest.mark.asyncio
+async def test_copy_text_is_human_readable_not_the_raw_arg(tmp_path: Path) -> None:
+    """Tier 2: /copy's ``text`` is a legible sentence, never the bare
+    control value — the defect this stage closes (#6230 issue thread:
+    ``open_artifact.py`` / ``copy.py`` put a control value where the
+    human-readable representation belongs)."""
+    reg = _make_registry(tmp_path)
+    session = _spawn(reg, "alpha", "sess-1")
+    ctx = _ctx(session)
+    await copy_cmd(ctx, "2")
+    [msg] = [m for m in ctx.transport.displayed if m.kind == "__copy_last_reply__"]
+    assert msg.text != "2", "text must not be the bare control value"
+    assert "2" in msg.text, "text should still be legible about which reply"
