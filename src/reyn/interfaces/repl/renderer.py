@@ -38,8 +38,9 @@ class UnknownKindStats:
     investigation was.
 
     Deliberately a SIBLING of ``textual_chat.app.PumpSwallowStats``, not a
-    reuse of it: that class's ``record(kind, exc: BaseException)`` is keyed
-    on an actual caught exception, and this event has none BY DESIGN — the
+    reuse of it: that class's ``record(site, exc: BaseException)`` (#6234:
+    was ``record(kind, exc)``) is keyed on an actual caught exception, and
+    this event has none BY DESIGN — the
     whole point of stage 1+2 is that an unrecognized kind renders instead
     of raising. Forcing a fake ``exc`` through the existing method to reuse
     its shape would fabricate a field this event does not have (CLAUDE.md:

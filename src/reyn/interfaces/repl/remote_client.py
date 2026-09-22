@@ -124,12 +124,12 @@ class ControlTimeoutCutStats:
 
     Keyed by ``payload["type"]`` alone — unlike
     :class:`~reyn.interfaces.inline.textual_chat.app.PumpSwallowStats`'s
-    ``(kind, exception type)`` pair, the exception type here is always
-    ``httpx.ReadTimeout`` by construction (:meth:`record` is only ever
-    called from that except-clause branch of :func:`post_control`), so a
-    second axis would name nothing new. The key domain itself
+    ``(site, exception type)`` pair (#6234), the exception type here is
+    always ``httpx.ReadTimeout`` by construction (:meth:`record` is only
+    ever called from that except-clause branch of :func:`post_control`),
+    so a second axis would name nothing new. The key domain itself
     (``BOUNDED_PAYLOAD_TYPES``) is a small, FIXED frozenset declared in
-    ``protocol.py`` — so unlike that sibling's open-ended ``(kind, exc
+    ``protocol.py`` — so unlike that sibling's open-ended ``(site, exc
     type)`` domain, ``counts`` can never grow past that set's own size;
     it is bounded by the vocabulary, not merely by a dedup key.
 
