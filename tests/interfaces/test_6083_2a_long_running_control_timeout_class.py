@@ -28,6 +28,27 @@ duration could be written into a test at all. The real socket-level mechanics
 (does ``httpx.Timeout(None, ...)`` genuinely never time out) are already
 proven by ``test_5894_control_timeout_and_coalesce.py``'s own real-listener
 tests; this module does not re-prove that.
+
+★ #6241 (on top of PR #6105's own co-vet): the
+derivation above walks ``ptype == "<literal>"`` comparisons — a population
+of ``ptype`` STRINGS — and says nothing about ``await``s that run BEFORE
+that dispatch chain even starts. ``endpoint.agui_submit`` has exactly one:
+``session = await registry.ensure_running(agent_name)`` (its own line,
+currently ~1518), which every classified ``ptype`` except ``heartbeat`` /
+``TOOL_CALL_RESULT`` runs THROUGH. A prologue ``await`` reaches every
+``ptype`` downstream of it, not just "its own" branch, so
+``BOUNDED_PAYLOAD_TYPES``'s classification of e.g. ``user_message`` was
+never actually independent of ``ensure_running``'s own (unresolved,
+#6241 ⑴) boundedness — the derivation above cannot see that because it
+only ever walks INSIDE a ``ptype ==`` branch's own body.
+:func:`test_prologue_awaits_are_a_pinned_population` below closes the
+POPULATION side of that gap (not the mechanism — see ``protocol.py``'s own
+SCOPE comment above ``LONG_RUNNING_PAYLOAD_TYPES`` for why this PR does not
+touch ``ensure_running`` itself): it AST-derives every ``await`` in
+``agui_submit`` that runs OUTSIDE any ``ptype ==``-conditioned ``if``/
+``elif`` and pins today's known set, so a NEW prologue ``await`` lands only
+with an explicit, reviewed change to that pin — never silently, the way
+``ensure_running`` itself did.
 """
 from __future__ import annotations
 
@@ -86,6 +107,84 @@ def _ptypes_agui_submit_branches_on() -> "set[str]":
     return found
 
 
+def _is_ptype_dispatch_if(node: "ast.If") -> bool:
+    """True when ``node.test`` is a bare ``ptype == "<literal>"`` compare
+    (either operand order) — the SAME single shape
+    :func:`_ptypes_agui_submit_branches_on` recognizes. An ``if``/``elif``
+    matching this shape is, itself and its whole ``elif`` chain (Python's
+    ``ast`` nests an ``elif`` as the ``If``'s own ``orelse``), BRANCH-scoped:
+    reached only when ``ptype`` equals that one literal, never by every
+    ``ptype``. Everything else at the function's own top level — including
+    an ``if`` that tests something OTHER than ``ptype`` (e.g. ``if not
+    registry.exists(agent_name):``) — is PROLOGUE: reached by every
+    ``ptype`` that gets that far, per :func:`_prologue_await_reprs`'s own
+    docstring.
+    """
+    test = node.test
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)):
+        return False
+    left, right = test.left, test.comparators[0]
+    for name_side, other_side in ((left, right), (right, left)):
+        if (isinstance(name_side, ast.Name) and name_side.id == "ptype"
+                and isinstance(other_side, ast.Constant)
+                and isinstance(other_side.value, str)):
+            return True
+    return False
+
+
+def _prologue_await_reprs() -> "set[str]":
+    """AST-derive every ``await <expr>`` in ``agui_submit`` that runs
+    BEFORE any ``ptype ==`` branch is reached — its PROLOGUE, per #6241:
+    a ``ptype``-branch population
+    (:func:`_ptypes_agui_submit_branches_on`) says nothing about an
+    ``await`` that sits OUTSIDE every branch, yet such an ``await`` is
+    reached by every ``ptype`` that survives past it — a fact
+    ``BOUNDED_PAYLOAD_TYPES``'s own per-branch human trace ("each branch's
+    own awaited callee", ``protocol.py``) cannot see either, because it was
+    written reading one branch at a time.
+
+    Walks the function's own TOP-LEVEL statements only (never descends INTO
+    a ``ptype ==``-dispatch ``if``/``elif`` chain, identified by
+    :func:`_is_ptype_dispatch_if`) and, for every other top-level statement
+    (an unconditional line, or an ``if`` that tests something other than
+    ``ptype`` — e.g. the auth / JSON-parse / ``registry.exists`` guards),
+    walks its FULL subtree for ``ast.Await`` nodes. Each finding is the
+    awaited expression's own unparsed source (``ast.unparse``) — a
+    human-readable repr, not a line number, so moving a line or
+    reformatting it does not itself trip this population. A RENAME
+    (receiver, argument, or call shape) DOES change the repr and DOES trip
+    it — that is intended, not a false positive to work around: the pin
+    going stale is the signal to go read whether a genuinely NEW await
+    landed or an EXISTING one was only rewritten, and either way the
+    person touching the pin re-confirms its boundedness rather than the
+    change sliding through unread.
+
+    Population is ``await`` expressions only (protocol.py's own SCOPE
+    comment, axis 1) — the awaited callee's own BODY is never opened. A
+    callee that is a plain ``def`` doing expensive sync work (e.g.
+    ``registry.py``'s ``Registry.get_or_load``, a ``def`` not an ``async
+    def``) has no ``await`` of its own to find here; that is
+    ``loop_tripwire``'s own territory, a DIFFERENT invariant (blocked event
+    loop, not read-timeout class) this module deliberately does not grow
+    into checking.
+    """
+    source = inspect.getsource(agui_submit)
+    tree = ast.parse(source)
+    fn = tree.body[0]
+    assert isinstance(fn, ast.AsyncFunctionDef), (
+        f"agui_submit's own top-level AST node changed shape: {type(fn)!r}"
+    )
+    found: "set[str]" = set()
+    for stmt in fn.body:
+        if isinstance(stmt, ast.If) and _is_ptype_dispatch_if(stmt):
+            continue
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Await):
+                found.add(ast.unparse(node.value))
+    return found
+
+
 def test_the_ast_derivation_itself_is_not_vacuous() -> None:
     """Tier 2: question 4's own discipline — a derivation that silently
     found zero branches would make every assertion below pass by having
@@ -134,6 +233,60 @@ def test_no_classified_type_is_stale() -> None:
     assert not stale, (
         f"classified but agui_submit no longer branches on it: {stale!r} "
         f"-- likely a renamed/removed ptype branch"
+    )
+
+
+def test_prologue_awaits_are_a_pinned_population() -> None:
+    """Tier 2: #6241 — the population-derivation gap itself. ``agui_submit``
+    runs ONE ``await`` before any ``ptype ==`` branch: ``registry.
+    ensure_running(agent_name)`` (its own line, ~1518) — reached by every
+    classified ``ptype`` except ``heartbeat`` / ``TOOL_CALL_RESULT`` (both
+    return earlier). ``payload = await request.json()`` runs even earlier,
+    before ``ptype`` is even read, so it reaches literally every branch
+    including those two.
+
+    Strip-falsify, in-file Edit only (no ``git stash``/``checkout``/
+    ``restore``): temporarily flipped :func:`_prologue_await_reprs`'s own
+    ``if`` guard so it walked ONLY the bodies of ``ptype ==`` branches (the
+    OLD, #6083 ⑵-a population shape) instead of skipping them — i.e.
+    reverted the population-derivation itself back to "the ``ptype ==``
+    branch's own await", the exact shape this PR's own module docstring
+    names as the pre-existing blind spot. Observed RED:
+
+        AssertionError: agui_submit's PROLOGUE awaits changed: found
+        {'registry.attach(target)', 'registry.attach_session(...)',
+        'execute_slash_command(...)', 'session_backlog_page(...)',
+        '_handle_answer(...)', 'session.submit_user_text(...)',
+        'cancel_queued_fn(msg_id)', 'cancel_fn()'}, pinned
+        {'registry.ensure_running(agent_name)', 'request.json()'}.
+        Extra items in the left set: [the 8 branch-internal awaits above]
+        Extra items in the right set: 'registry.ensure_running(agent_name)',
+        'request.json()'
+
+    (``found`` came back as every BRANCH-internal await — the OLD, #6083
+    ⑵-a population — with NEITHER prologue await in it: the old,
+    branch-scoped derivation cannot see ``ensure_running`` or
+    ``request.json()`` at all, because neither line sits inside any
+    ``ptype ==`` body. That is the exact silent gap this test exists to
+    close — nothing in the old shape would ever force ``ensure_running``'s
+    own boundedness back onto review.) Reverted the guard to the correct
+    (prologue-skips-branches) shape immediately after observing the RED
+    above; this docstring is that observation, not a live assertion.
+    """
+    found = _prologue_await_reprs()
+    known = {"registry.ensure_running(agent_name)", "request.json()"}
+    assert found, (
+        "the AST walk found zero prologue awaits -- it likely stopped "
+        "matching agui_submit's real top-level shape (this must never "
+        "pass vacuously: an empty population proves nothing)"
+    )
+    assert found == known, (
+        f"agui_submit's PROLOGUE awaits changed: found {found!r}, pinned "
+        f"{known!r}. A NEW prologue await reaches EVERY ptype downstream "
+        f"of it (protocol.py's own SCOPE comment, axis 2) -- update this "
+        f"pin only after re-reading whether that new await changes any "
+        f"downstream ptype's BOUNDED/LONG_RUNNING classification, not as "
+        f"a mechanical fix to make this test green again."
     )
 
 
