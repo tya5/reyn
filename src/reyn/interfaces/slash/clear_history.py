@@ -2,7 +2,7 @@
 
 Sibling to ``/reset`` (run state) at a different scope: this command
 clears the conversation thread (``Session.history`` + per-agent
-``history.jsonl``). Everything else stays intact:
+``history/`` segment directory). Everything else stays intact:
 
 - ``.reyn/events/``                (P6 audit truth — never touched)
 - ``.reyn/state/wal.jsonl``        (run resume — preserved)
@@ -22,8 +22,22 @@ the history half of the original user request survives; there is no
 longer an action-usage table to clear.
 
 Two-step confirmation pattern mirrors ``/reset`` because the history
-delete is irreversible (= history.jsonl isn't tracked by git in any
-typical project layout).
+delete is irreversible (= the ``history/`` segment directory isn't
+tracked by git in any typical project layout).
+
+#6240/#6248 (architect ruling on PR #6257's own review, issuecomment-
+5773552909): the ACTUAL disk wipe + the handle-close/reopen ordering
+invariant it depends on now live on :meth:`Session.clear_history`, not
+here. This handler was ALREADY reaching across that boundary before
+segments existed (``history_path.unlink()`` / ``history.clear()``), just
+through PUBLIC attribute names that #3595 S4's residue gate had no way
+to see — #6248 did not introduce that crossing, only exposed it, once
+the operation grew a real ordering invariant (a held-open file handle) a
+slash module cannot safely honor from the outside. This handler keeps
+only the confirm-flow UX: the two-step confirmation prompt, the
+``Currently: N turns`` line, and the success/error reply text — see
+``Session.clear_history``'s own docstring for the 4-step order and why
+it is load-bearing.
 """
 from __future__ import annotations
 
@@ -66,32 +80,28 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
         return
 
     history = getattr(ctx.session, "history", None)
-    history_path = getattr(ctx.session, "history_path", None)
+    clear_op = getattr(ctx.session, "clear_history", None)
 
-    # Snapshot size before any mutation so the report is accurate even if
-    # disk deletion is attempted first.
-    n_turns_before = len(history) if isinstance(history, list) else 0
-
-    # Disk deletion first: if it fails the in-memory state is unchanged and
-    # the next session restart will see a consistent (uncorrupted) history.
-    # Clearing memory first then failing on disk leaves the opposite: the
-    # current session sees empty history but history.jsonl survives and
-    # reloads the old turns on next startup.
-    if history_path is not None:
-        try:
-            history_path.unlink(missing_ok=True)
-        except OSError as exc:
-            await reply_error(
-                ctx,
-                f"failed to remove history file {history_path}: {exc}",
-            )
-            return
-
-    if not isinstance(history, list):
+    if not callable(clear_op):
+        # A session-shaped stub with no real disk-backed history at all
+        # (test doubles, or a future session kind) — nothing to wipe.
         await reply(ctx, "✓ Nothing to clear (= no history).")
         return
 
-    history.clear()
+    try:
+        n_turns_before = clear_op()
+    except OSError as exc:
+        history_dir = getattr(ctx.session, "history_dir", None)
+        await reply_error(
+            ctx,
+            f"failed to remove history directory {history_dir}: {exc}",
+        )
+        return
+
+    if not n_turns_before and not isinstance(history, list):
+        await reply(ctx, "✓ Nothing to clear (= no history).")
+        return
+
     await reply(
         ctx,
         f"✓ Cleared: {n_turns_before} history turn(s). "

@@ -454,7 +454,7 @@ async def test_extend_history_backward_async_does_not_stall_the_worker_loops_fra
     below would never get a chance to run at all."""
     import reyn.runtime.history_tail_reader as history_tail_reader
 
-    real_read = history_tail_reader.read_history_before
+    real_read = history_tail_reader.read_history_before_segmented
     read_gate = threading.Event()
     read_started = threading.Event()
 
@@ -473,7 +473,7 @@ async def test_extend_history_backward_async_does_not_stall_the_worker_loops_fra
         lambda: inner, read_model_extend_history_fn=_extend,
     )
     proxy.start()
-    history_tail_reader.read_history_before = _gated_read
+    history_tail_reader.read_history_before_segmented = _gated_read
     try:
         extend_task = asyncio.create_task(
             proxy.extend_history_backward(agent="alpha"),
@@ -512,7 +512,7 @@ async def test_extend_history_backward_async_does_not_stall_the_worker_loops_fra
         # issuecomment-5378539254). Safe to call twice (Event.set() is
         # idempotent).
         read_gate.set()
-        history_tail_reader.read_history_before = real_read
+        history_tail_reader.read_history_before_segmented = real_read
         await proxy.shutdown()
 
 
@@ -537,7 +537,7 @@ async def test_extend_history_backward_async_apply_is_a_no_op_when_history_moved
     intervening mutation's own state."""
     import reyn.runtime.history_tail_reader as history_tail_reader
 
-    real_read = history_tail_reader.read_history_before
+    real_read = history_tail_reader.read_history_before_segmented
     read_gate = threading.Event()
     read_started = threading.Event()
 
@@ -556,7 +556,7 @@ async def test_extend_history_backward_async_apply_is_a_no_op_when_history_moved
         lambda: inner, read_model_extend_history_fn=_extend,
     )
     proxy.start()
-    history_tail_reader.read_history_before = _gated_read
+    history_tail_reader.read_history_before_segmented = _gated_read
     try:
         extend_task = asyncio.create_task(
             proxy.extend_history_backward(agent="alpha"),
@@ -593,5 +593,5 @@ async def test_extend_history_backward_async_apply_is_a_no_op_when_history_moved
         # is the same process-hang failure mode (architect finding,
         # issuecomment-5378577064).
         read_gate.set()
-        history_tail_reader.read_history_before = real_read
+        history_tail_reader.read_history_before_segmented = real_read
         await proxy.shutdown()

@@ -207,6 +207,45 @@ def _rewind_point_kind(wal_kind: str) -> str:
         return "plan-step"
     return "turn"
 
+
+def _range_union_covers(
+    min_seq: int, max_seq: int, ranges: "list[tuple[int, int]]",
+) -> bool:
+    """#6240/#6248: is EVERY seq in ``[min_seq, max_seq]`` covered by the
+    UNION of *ranges* (a session's recorded compaction-fold spans,
+    ``AgentRegistry._history_compacted_ranges``'s own return)?
+
+    ``_gc_one_session_history`` needs this because coverage can
+    accumulate across MULTIPLE non-overlapping folds over a session's
+    life (e.g. fold 1 covers ``[1, 50]``, fold 2 covers ``[51, 100]`` —
+    neither alone covers a segment spanning ``[1, 100]``, but their union
+    does) — mirrors ``is_seq_still_active``'s own per-seq range check
+    (chat_message.py, #5765), generalized from "is this ONE seq inside
+    ANY single range" to "is this WHOLE range inside the merged union of
+    all of them" — the shape a whole-segment (not per-line) GC decision
+    needs. Pure/no I/O: every input is already in memory (the caller
+    reads the actual file content only for the SMALL number of segments
+    that carry their own ``role="summary"`` line, never for the segment
+    being tested here).
+
+    Known, disclosed simplification (architect's own "未確認": #6248
+    comment 5772696821, "封印済 segment を GC が縮めた後、それを再分割
+    するかは決めていません。既定は「しない」"): a segment only PARTIALLY
+    covered by the union (some of its seqs droppable, some not) is kept
+    WHOLE, never partially rewritten — #6248's whole point is that GC
+    acts on filenames, never segment bodies. A partially-covered segment
+    becomes droppable later, once a subsequent fold's range extends the
+    union far enough to cover it entirely."""
+    if not ranges:
+        return False
+    merged: "list[list[int]]" = []
+    for cf, ct in sorted(ranges):
+        if merged and cf <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], ct)
+        else:
+            merged.append([cf, ct])
+    return any(cf <= min_seq and max_seq <= ct for cf, ct in merged)
+
 # PR13: synthesized auto-network topology. Members = every known agent
 # that does NOT belong to any user-declared topology. Computed on demand
 # (no caching — registry state mutates and stale caches are a footgun).
@@ -1543,17 +1582,32 @@ class AgentRegistry:
                 )
 
     def last_activity_at(self, name: str) -> datetime | None:
-        """Last mtime across history.jsonl and any audit events file.
+        """Last mtime across every history file and any audit events file.
 
-        history.jsonl lives in `agents/<name>/`; chat audit log lives under
+        The pre-segment flat ``history.jsonl`` lives in `agents/<name>/`;
+        post-#6240/#6248, an agent's REAL current history lives under
+        `agents/<name>/history/` instead (the active segment plus zero or
+        more sealed ones — see ``reyn.runtime.history_segments``). Both
+        are checked here (the flat file is a candidate too — a agent that
+        never ran a turn since the #6248 upgrade still has ONLY that file,
+        and its frozen mtime is still a real "last activity" fact, never a
+        wrong one: ``max()`` below can only ever be beaten by something
+        genuinely more recent). Chat audit log lives under
         `events/agents/<name>/chat/<YYYY-MM>/*.jsonl` (PR20). Take the max
         mtime across all those files.
         """
+        from reyn.runtime.history_segments import all_segment_paths_oldest_first, history_dir_for
+
         agent_dir = self._dir / name
         candidates: list[float] = []
         history = agent_dir / "history.jsonl"
         if history.is_file():
             candidates.append(history.stat().st_mtime)
+        for seg_path in all_segment_paths_oldest_first(history_dir_for(agent_dir)):
+            try:
+                candidates.append(seg_path.stat().st_mtime)
+            except OSError:
+                continue
         # PR20: events live outside agents/<name>/. Path is computed relative
         # to .reyn/ root which is the parent of self._dir (= .reyn/agents).
         events_root = self._dir.parent / "events" / "agents" / name / "chat"
@@ -2025,18 +2079,26 @@ class AgentRegistry:
         oldest = next(iter(self._state_log.iter_from(1)), None)
         return oldest.get("seq") if oldest else None
 
-    def _history_path_for(self, name: str, sid: str = _DEFAULT_SID) -> Path:
-        """On-disk ``history.jsonl`` path for ``(name, sid)`` (#5759 stage 2).
+    def _history_dir_for(self, name: str, sid: str = _DEFAULT_SID) -> Path:
+        """On-disk ``history/`` segment directory for ``(name, sid)``
+        (#5759 stage 2 / #6240 / #6248).
 
         Mirrors the 2 real construction sites this codebase already has —
-        ``last_activity_at`` above (main: ``<agent>/history.jsonl``, the
-        legacy byte-identical path) and ``spawn_session``'s own per-session
-        fixup (spawned: ``<agent>/state/sessions/<enc(sid)>/history.jsonl``,
-        i.e. ``_session_state_dir(name, sid) / "history.jsonl"``) — rather
-        than re-deriving a third copy of this branch."""
+        ``last_activity_at`` above (main: ``<agent>/history/``) and
+        ``spawn_session``'s own per-session fixup (spawned:
+        ``<agent>/state/sessions/<enc(sid)>/history/``, i.e.
+        ``_session_state_dir(name, sid) / "history"``) — rather than
+        re-deriving a third copy of this branch. Both root at the SAME
+        parent a pre-#6248 caller would have used for the flat
+        ``history.jsonl`` (:func:`reyn.runtime.history_segments.
+        history_dir_for` just appends ``"history"`` under it) — the old
+        flat file at that parent, if one exists, is untouched: this
+        method (and every caller of it) is never that file's reader."""
+        from reyn.runtime.history_segments import history_dir_for
+
         if sid == _DEFAULT_SID:
-            return self._dir / name / "history.jsonl"
-        return self._session_state_dir(name, sid) / "history.jsonl"
+            return history_dir_for(self._dir / name)
+        return history_dir_for(self._session_state_dir(name, sid))
 
     def _history_margin_boundary_seq(
         self, name: str, sid: str = _DEFAULT_SID,
@@ -2048,24 +2110,27 @@ class AgentRegistry:
         boundary itself and everything newer must never be removed.
 
         Reuses the SAME named constant and the SAME tail-reading function
-        real startup hydration already uses (``Session._HISTORY_HYDRATE_
-        MIN_LINES`` / ``read_history_tail``, session.py's own 4 call
-        sites) rather than a second, independently-typed ``200`` literal
-        or a second reader — the exact "same guard, second copy" shape
+        (now its segment-aware sibling, #6240/#6248) real startup
+        hydration already uses (``Session._HISTORY_HYDRATE_MIN_LINES`` /
+        ``read_history_tail_segmented``, session.py's own hydration path)
+        rather than a second, independently-typed ``200`` literal or a
+        second reader — the exact "same guard, second copy" shape
         ``_oldest_kept_seq`` above already exists to avoid, now for the
         margin instead of the WAL floor.
 
-        Returns ``None`` when history.jsonl is missing/empty (nothing to
+        Returns ``None`` when there is no history at all yet (nothing to
         bound — there is no content for GC to consider either)."""
         # Deferred import: mirrors this module's own existing lazy-import
         # pattern (e.g. ``workspace_paths``, ``process_registry`` above) —
         # avoids a module-level session.py <-> registry.py coupling for a
         # single shared constant.
-        from reyn.runtime.history_tail_reader import read_history_tail
+        from reyn.runtime.history_segments import all_segment_paths_newest_first
+        from reyn.runtime.history_tail_reader import read_history_tail_segmented
         from reyn.runtime.session import _HISTORY_HYDRATE_MIN_LINES
 
-        history_path = self._history_path_for(name, sid)
-        tail = read_history_tail(history_path, min_lines=_HISTORY_HYDRATE_MIN_LINES)
+        history_dir = self._history_dir_for(name, sid)
+        paths = all_segment_paths_newest_first(history_dir)
+        tail = read_history_tail_segmented(paths, min_lines=_HISTORY_HYDRATE_MIN_LINES)
         if not tail:
             return None
         try:
@@ -2078,8 +2143,9 @@ class AgentRegistry:
         self, name: str, sid: str = _DEFAULT_SID,
     ) -> "list[tuple[int, int]]":
         """Every ``(covers_from_seq, covers_through_seq)`` range recorded
-        by EVERY ``role="summary"`` line in session ``(name, sid)``'s
-        ``history.jsonl`` — #5759 stage 2, architect correction.
+        by EVERY ``role="summary"`` line across session ``(name, sid)``'s
+        segments — #5759 stage 2 (architect correction) / #6240/#6248
+        (segment-aware).
 
         GC needs the UNION of every fold's coverage, not just the latest
         one: an older fold's range sits below the latest summary's own
@@ -2094,6 +2160,15 @@ class AgentRegistry:
         structuralization ② (one accessor) still holds — only the call
         COUNT differs from those 2 existing callers, not the function.
 
+        #6248's own point ④/⑤ (the reason ``has_summary`` is in every
+        sealed segment's OWN name): a summary can only ever exist in a
+        segment sealed WITH one, or in the still-open active segment
+        (compaction can fire mid-segment, before the size boundary is
+        crossed) — so this reads ONLY those, never a segment the filename
+        already says holds none. This is the entire reason GC can decide
+        "does covering exist" for the (usually many more) non-summary
+        segments without opening them.
+
         Fail-closed per summary (matches ``is_seq_still_active``'s own
         per-summary safe-side default): a summary with no ``covers_from_
         seq`` (persisted before #5765) contributes NO range rather than a
@@ -2102,58 +2177,80 @@ class AgentRegistry:
             compaction_coverage_from_summary,
             parse_history_line,
         )
+        from reyn.runtime.history_segments import (
+            active_segment_path,
+            list_sealed_segments,
+        )
 
-        history_path = self._history_path_for(name, sid)
+        history_dir = self._history_dir_for(name, sid)
+        candidates = [s.path for s in list_sealed_segments(history_dir) if s.has_summary]
+        active = active_segment_path(history_dir)
+        if active.is_file():
+            candidates.append(active)
+
         ranges: list[tuple[int, int]] = []
-        if not history_path.is_file():
-            return ranges
-        with history_path.open("r", encoding="utf-8") as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    quick = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(quick, dict) or quick.get("role") != "summary":
-                    continue
-                msg = parse_history_line(line)
-                if msg is None:
-                    continue
-                covers_from, covers_through = compaction_coverage_from_summary(msg)
-                if covers_from is not None and covers_through > 0:
-                    ranges.append((covers_from, covers_through))
+        for seg_path in candidates:
+            with seg_path.open("r", encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        quick = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(quick, dict) or quick.get("role") != "summary":
+                        continue
+                    msg = parse_history_line(line)
+                    if msg is None:
+                        continue
+                    covers_from, covers_through = compaction_coverage_from_summary(msg)
+                    if covers_from is not None and covers_through > 0:
+                        ranges.append((covers_from, covers_through))
         return ranges
 
     def _gc_one_session_history(
         self, name: str, sid: str, oldest_seq: int,
     ) -> dict:
-        """The synchronous GC rewrite body for ONE ``(name, sid)`` session's
-        ``history.jsonl`` (#5759 stage 2) — run off the event loop by the
-        caller (``asyncio.to_thread``; history.jsonl can reach hundreds of
-        MB, #4387's own measurement).
+        """The synchronous GC body for ONE ``(name, sid)`` session's
+        ``history/`` segments (#5759 stage 2 / #6240 / #6248, architect
+        design — issue #6248 comments 5772696821 + 5772712797, the
+        second being the CURRENT ruling).
 
-        A turn is GC-eligible only when ALL of:
-          ① below the WAL's own PHYSICAL oldest-kept seq (``oldest_seq``,
-             passed in from ``_oldest_kept_seq()`` — the SAME accessor
-             ``checkout()``/``list_rewind_points()`` use, never re-derived
-             here as a second copy)
-          ② outside the startup-hydration margin
-             (``_history_margin_boundary_seq``)
-          ③ inside SOME recorded fold's ``[covers_from, covers_through]``
-             range (``_history_compacted_ranges``, unioned via the shared
-             ``is_seq_still_active`` predicate — #5765's own single place
-             for this check)
-        A ``role="summary"`` line is NEVER dropped, regardless of its own
-        seq: it is the durable EVIDENCE of what a fold covered — dropping
-        one would corrupt every future GC pass's own range computation
-        (``_history_compacted_ranges`` reads every surviving summary), the
-        same reasoning ``truncate_below``'s own ``always_keep_kinds``
-        gives ``REWIND_KIND`` reset-records.
-        Missing history.jsonl, or nothing ever folded, is a no-op."""
-        from reyn.runtime.chat_message import is_seq_still_active
-        from reyn.runtime.history_tail_reader import rewrite_history_dropping
+        A SEALED segment is GC-eligible (whole-segment unlink, 0 bytes of
+        its own content ever read) only when ALL of:
+          ① its OWN ``has_summary`` flag (its filename, #6248 ②) is
+             False — a summary-carrying segment is NEVER unlinked,
+             matching ``rewrite_history_dropping``'s pre-existing
+             "a summary line is never dropped" invariant, now applied at
+             whole-segment granularity (this design deliberately does not
+             shrink a summary-carrying segment in place either — see
+             ``_range_union_covers``'s own module-level note on why a
+             partial re-split is left unbuilt).
+          ② its ``max_seq`` (filename) is below BOTH the WAL's own
+             PHYSICAL oldest-kept seq (``oldest_seq``, passed in from
+             ``_oldest_kept_seq()`` — the SAME accessor ``checkout()``/
+             ``list_rewind_points()`` use, never re-derived here as a
+             second copy) AND the startup-hydration margin
+             (``_history_margin_boundary_seq``).
+          ③ its WHOLE ``[min_seq, max_seq]`` range (both filename facts)
+             falls inside the UNION of every recorded fold's
+             ``[covers_from, covers_through]`` range
+             (``_history_compacted_ranges``) — computed via
+             ``is_seq_still_active``'s own per-seq predicate at the two
+             endpoints plus everything between (``_range_union_covers``
+             below), never assumed from a single range alone (folds can
+             accumulate coverage across MULTIPLE non-overlapping
+             summaries over a session's life).
+        The ACTIVE segment is never a GC candidate at all (it is not in
+        ``list_sealed_segments``'s own return by construction — #6248 ③:
+        only the appender ever renames it, GC only ever unlinks a NAME
+        that already says "sealed").
+
+        No missing-file no-op needed any more (unlike the pre-#6248
+        single-file version): a session with zero sealed segments simply
+        has an empty candidate list, and the loop below does nothing."""
+        from reyn.runtime.history_segments import list_sealed_segments
 
         margin_boundary = self._history_margin_boundary_seq(name, sid)
         if margin_boundary is None:
@@ -2162,22 +2259,25 @@ class AgentRegistry:
         if not ranges:
             return {"dropped": 0, "kept": 0}
 
-        def should_drop(entry: dict) -> bool:
-            if entry.get("role") == "summary":
-                return False
-            seq = entry["seq"]
-            if seq >= oldest_seq or seq >= margin_boundary:
-                return False
-            return any(
-                not is_seq_still_active(seq, covers_from=cf, covers_through=ct)
-                for cf, ct in ranges
-            )
-
-        history_path = self._history_path_for(name, sid)
-        return rewrite_history_dropping(history_path, should_drop=should_drop)
+        history_dir = self._history_dir_for(name, sid)
+        dropped = 0
+        kept = 0
+        for seg in list_sealed_segments(history_dir):
+            if seg.has_summary:
+                kept += 1
+                continue
+            if seg.max_seq >= oldest_seq or seg.max_seq >= margin_boundary:
+                kept += 1
+                continue
+            if not _range_union_covers(seg.min_seq, seg.max_seq, ranges):
+                kept += 1
+                continue
+            seg.path.unlink(missing_ok=True)
+            dropped += 1
+        return {"dropped": dropped, "kept": kept}
 
     async def _gc_history_jsonl_below(self, floor: int) -> None:
-        """#5759 stage 2: GC every known session's ``history.jsonl`` on the
+        """#5759 stage 2: GC every known session's history segments on the
         SAME throttled pass as the WAL truncation + generation prune above
         (lead-coder ruling: no new trigger mechanism — piggyback on the
         existing pass, never a "compaction just finished" trigger).
@@ -2188,58 +2288,48 @@ class AgentRegistry:
         FORGET — its rewrite drains in a worker, not necessarily done yet
         — so ``_oldest_kept_seq()`` may still report the PRE-truncation
         physical floor for a cycle. That is the fail-safe direction (more
-        conservative, never drops a history.jsonl range whose WAL
-        counterpart has not actually been truncated away yet), and it is
-        the SAME accessor ``checkout()``/``list_rewind_points()`` use —
-        never a second, independently-derived floor (structuralization ②).
+        conservative, never drops a history range whose WAL counterpart
+        has not actually been truncated away yet), and it is the SAME
+        accessor ``checkout()``/``list_rewind_points()`` use — never a
+        second, independently-derived floor (structuralization ②).
 
         Best-effort per session, matching this method's own sibling prune
         steps: one session's failure never blocks another's.
 
-        #6077 提案 1 (architect ruling, #6247 review): ``_gc_one_session_
-        history``'s own ``rewrite_history_dropping`` call always replaces
-        ``history.jsonl``'s inode (``tmp.replace(path)`` is unconditional
-        once the file exists) — Session now holds a session-lifetime
-        append handle onto that same path (see ``Session._history_append_
-        fh``'s own docstring), so rewriting a LIVE session's own
-        ``history.jsonl`` out from under it would strand that handle on a
-        detached inode: writes through it would keep succeeding at the OS
-        level but silently vanish from what any reader of the (new) path
-        ever sees again.
-
-        The class of defect this guards against is "one path, two
-        writers, no owner" — not a race to be narrowed, but a conflict to
-        remove: a ``(name, sid)`` this registry holds a live in-process
-        ``Session`` for (``self._sessions`` — checked via the same public
-        ``get_session`` accessor every other liveness read in this class
-        uses, never a second independently-derived truth) is skipped here
-        entirely. No live appender ⇒ no writer for GC to conflict with ⇒
-        nothing to invalidate. A NON-live session's ``history.jsonl`` (no
-        loaded ``Session``, i.e. GC's own worker thread is the file's only
-        writer) is unaffected and still gets GC'd exactly as before.
-
-        Known, deliberate scope-narrowing this introduces: a LIVE
-        session's ``history.jsonl`` is no longer GC'd AT ALL while it
-        stays live (a long-running agent's own history keeps growing
-        past what #5759 stage 2 would otherwise have trimmed) — the
-        live-session GC path is tracked separately (architect owns the
-        next-stage design); out of scope for THIS change, which is only
-        removing the conflict this method used to have with a held-open
-        append handle."""
+        🔴 #6248 (supersedes #6247's own liveness gate — this docstring
+        used to explain and defend that gate; it is now REMOVED, not
+        narrowed): the #6247 gate existed because GC's rewrite always
+        replaced ``history.jsonl``'s own inode, which a live session held
+        an append handle onto — ONE path, TWO writers, was the conflict.
+        #6248 removes the conflict at its ROOT instead of continuing to
+        manage it: GC now only ever unlinks a SEALED segment (a filename
+        the active segment can never carry — ``Session._maybe_seal_
+        active_history_segment`` is the ONLY code that ever produces that
+        rename, and it always does so BEFORE the next write reaches the
+        new active segment, #6248 ③), so the two writers' path sets are
+        DISJOINT by construction — there is no "live session" case left
+        to skip, because there is no path a live session's own appends
+        and this GC pass could ever both target.
+        Keeping the gate after this change would have reintroduced
+        exactly the defect #6240 opened this arc to close: a live
+        session's OWN sealed segments — the majority of a long-running
+        agent's actual disk usage — would never be GC'd at all, silently
+        re-growing the same unbounded-live-session shape #5759 stage 2's
+        original liveness carve-out (see the OLD version of this
+        docstring, still in git history) already disclosed as a known
+        gap."""
         oldest_seq = self._oldest_kept_seq()
         if oldest_seq is None:
             return  # nothing has ever been truncated from the WAL yet
         for name in self.list_names():
             for sid in self._discover_session_ids(name):
-                if self.get_session(name, sid) is not None:
-                    continue  # live session: GC must never rewrite its history.jsonl (see docstring)
                 try:
                     await asyncio.to_thread(
                         self._gc_one_session_history, name, sid, oldest_seq,
                     )
                 except Exception as e:  # noqa: BLE001 — defensive, matches sibling prune steps
                     logger.warning(
-                        "history.jsonl GC failed for %r/%r: %s", name, sid, e,
+                        "history GC failed for %r/%r: %s", name, sid, e,
                     )
 
     async def checkout(
@@ -4238,11 +4328,31 @@ class AgentRegistry:
         # already-per-session WAL/snapshot above. "main" (_DEFAULT_SID) never reaches
         # this fixup (it comes through get_or_load), so single-session agents keep the
         # legacy name-only paths byte-identical — no migration.
-        session.history_path = session_dir / "history.jsonl"
-        # _append_history opens the file directly (no mkdir), mirroring __init__'s
-        # workspace_dir.mkdir — the per-session dir must exist. (EventStore creates its
-        # own dir lazily on first write, so events need no explicit mkdir.)
-        session.history_path.parent.mkdir(parents=True, exist_ok=True)
+        # #6240/#6248: re-key to the per-session ``history/`` segment
+        # directory, not a bare flat file — mirrors ``Session.__init__``'s
+        # own derivation (``history_segments.history_dir_for`` /
+        # ``active_segment_path``), just rooted at ``session_dir`` instead
+        # of the main session's ``workspace_dir``. Also resets the
+        # active-segment tracking triple and drops any cached append
+        # handle: this rekey runs strictly before this session's first
+        # turn (no append has happened against the pre-rekey path yet,
+        # since ``__init__``'s own handle is lazy), but resetting
+        # defensively here — rather than assuming that ordering holds
+        # forever — is cheap and makes a future caller's own ordering bug
+        # fail differently (a fresh segment at the new path) instead of
+        # silently appending to the WRONG session's history.
+        from reyn.runtime.history_segments import active_segment_path, history_dir_for
+
+        session._invalidate_history_append_handle()
+        session._active_segment_min_seq = None
+        session._active_segment_max_seq = None
+        session._active_segment_has_summary = False
+        session.history_dir = history_dir_for(session_dir)
+        session.history_path = active_segment_path(session.history_dir)
+        # _append_history's own handle creates history_dir lazily on first
+        # open (mirroring __init__'s workspace_dir.mkdir) — no explicit
+        # mkdir needed here. (EventStore creates its own dir lazily on
+        # first write too, so events need no explicit mkdir either.)
         session.set_events_dir(
             session.events_dir.parent / "sessions" / self._encode_sid_for_dir(new_sid) / "chat"
         )

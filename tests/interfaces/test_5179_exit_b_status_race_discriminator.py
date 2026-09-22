@@ -131,8 +131,14 @@ async def test_capture_right_after_return_still_mismatches_on_exit_b(tmp_path, m
         release_extend_read.wait()
         return []
 
+    # #6240/#6248: Session._read_and_parse_older_entries now calls the
+    # segment-aware sibling (`read_history_before_segmented`, sourced from
+    # `history_segments.all_segment_paths_newest_first`), not the single-
+    # path `read_history_before` this test used to patch -- a fresh
+    # session has no segments at all yet, so the list handed to the real
+    # function is empty either way; only the call target's NAME changed.
     monkeypatch.setattr(
-        "reyn.runtime.history_tail_reader.read_history_before",
+        "reyn.runtime.history_tail_reader.read_history_before_segmented",
         _stalling_read_history_before,
     )
 

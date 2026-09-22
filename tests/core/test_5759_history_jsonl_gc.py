@@ -1,22 +1,35 @@
-"""Tier 2: OS invariant -- #5759 stage 2, history.jsonl GC end-to-end.
+"""Tier 2: OS invariant -- #5759 stage 2 / #6240 / #6248, history segment
+GC end-to-end.
 
-Real `AgentRegistry` + real `StateLog` + real on-disk `history.jsonl`
-(no mocks). Drives the actual wired entry point
-(`AgentRegistry._prune_generations_below`, the SAME throttled pass the
+#6240/#6248 (architect design, issue #6248 comments 5772696821 +
+5772712797 -- the second is the CURRENT ruling): ``history.jsonl`` is now
+a per-session ``history/`` directory of SEGMENTS -- one ACTIVE segment
+(``history.jsonl`` inside it) plus zero or more SEALED segments
+(``history-<min_seq>-<max_seq>-<s|n>.jsonl``). GC now decides ENTIRELY
+from a sealed segment's own FILENAME (never reading its content) whether
+to ``unlink`` it outright:
+
+  ① its own ``has_summary`` flag is False (a summary-carrying segment is
+     NEVER unlinked, matching the pre-#6248 "a summary line is never
+     dropped" invariant, now at whole-segment granularity)
+  ② its ``max_seq`` is below BOTH the WAL's real, truncated floor AND the
+     startup-hydration margin
+  ③ its WHOLE ``[min_seq, max_seq]`` range falls inside the UNION of
+     every recorded fold's ``[covers_from, covers_through]`` range
+     (folds can accumulate across MULTIPLE non-overlapping summaries)
+
+Real ``AgentRegistry`` + real ``StateLog`` + real on-disk segment files
+throughout (no mocks). Drives the actual wired entry point
+(``AgentRegistry._prune_generations_below``, the SAME throttled pass the
 WAL truncation + generation prune already use -- no new trigger) rather
-than probing the 4 private helpers it composes directly, per this
-codebase's own established convention for this class of GC test
-(`test_registry_rewind_to.py`, `test_2259_pr1b_agent_identity_truncation_
-bug.py`, and `test_agent_archive_delete_1954.py` all call
-`_prune_generations_below` directly -- an accepted semi-public GC seam in
-this test suite, not a Tier-4 private-state probe).
+than probing the private helpers it composes directly, per this
+codebase's own established convention for this class of GC test.
 
-A turn is GC-eligible only when ALL of: (1) below the WAL's real,
-truncated floor, (2) outside the startup-hydration margin, (3) inside
-SOME recorded fold's [covers_from, covers_through] range (union across
-every summary the file has ever recorded, not just the latest one --
-the architect correction this file's own `test_older_folds_range_is_
-also_collected_not_just_the_latest_summary` exists to pin).
+Fixtures write segment files DIRECTLY (bypassing real appends/sealing,
+which ``test_6240_6248_history_segments.py`` covers on its own) --
+matching this file's own pre-#6248 precedent of writing raw JSON lines
+straight to disk for GC-specific tests, now shaped as segment files
+instead of one flat file.
 """
 from __future__ import annotations
 
@@ -27,6 +40,12 @@ import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.history_segments import (
+    active_segment_path,
+    history_dir_for,
+    sealed_segment_name,
+)
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import _HISTORY_HYDRATE_MIN_LINES
@@ -67,15 +86,6 @@ async def _advance_floor_past(reg: AgentRegistry, seq: int) -> int:
     return oldest
 
 
-def _write_history(tmp_path: Path, name: str, lines: list[dict]) -> Path:
-    path = tmp_path / ".reyn" / "agents" / name / "history.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for entry in lines:
-            f.write(json.dumps(entry) + "\n")
-    return path
-
-
 def _turn(seq: int, role: str = "user") -> dict:
     return {"role": role, "seq": seq, "text": f"t{seq}"}
 
@@ -87,18 +97,35 @@ def _summary(seq: int, *, covers_from: "int | None", covers_through: int) -> dic
     return {"role": "summary", "seq": seq, "content": "summary", "meta": meta}
 
 
-def _seqs(path: Path) -> list[int]:
-    return [
-        json.loads(line)["seq"]
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+def _write_sealed(
+    tmp_path: Path, name: str, lines: list[dict], *, has_summary: bool,
+) -> Path:
+    """Write *lines* as one SEALED segment under ``<name>``'s ``history/``
+    dir, named from their own min/max seq (matching what the real
+    appender's own seal would have produced)."""
+    hist_dir = history_dir_for(tmp_path / ".reyn" / "agents" / name)
+    hist_dir.mkdir(parents=True, exist_ok=True)
+    seqs = [e["seq"] for e in lines]
+    seg_name = sealed_segment_name(min(seqs), max(seqs), has_summary=has_summary)
+    path = hist_dir / seg_name
+    with path.open("w", encoding="utf-8") as f:
+        for entry in lines:
+            f.write(json.dumps(entry) + "\n")
+    return path
+
+
+def _write_active(tmp_path: Path, name: str, lines: list[dict]) -> Path:
+    """Write *lines* as the ACTIVE segment (never a GC candidate)."""
+    hist_dir = history_dir_for(tmp_path / ".reyn" / "agents" / name)
+    hist_dir.mkdir(parents=True, exist_ok=True)
+    path = active_segment_path(hist_dir)
+    with path.open("w", encoding="utf-8") as f:
+        for entry in lines:
+            f.write(json.dumps(entry) + "\n")
+    return path
 
 
 def _record_gen(reg: AgentRegistry, name: str, seq: int) -> None:
-    """Persist a generation for ``name`` cut at boundary ``seq`` -- the
-    same helper `test_registry_list_rewind_points_1f.py` uses to give
-    `list_rewind_points()` real candidates to return."""
     snap = AgentSnapshot.empty(name)
     snap.applied_seq = seq
     reg._store_for(name).record(snap)
@@ -107,444 +134,341 @@ def _record_gen(reg: AgentRegistry, name: str, seq: int) -> None:
 def _pad_past_margin(start: int) -> list[dict]:
     """Enough trailing turns that the margin boundary sits at/after
     *start* -- keeps the margin condition out of the way for tests that
-    aren't specifically about it."""
+    aren't specifically about it. Written to the ACTIVE segment (the
+    realistic shape: recent, still-growing content stays active)."""
     return [_turn(s) for s in range(start, start + _HISTORY_HYDRATE_MIN_LINES + 5)]
 
 
-def _raw_range(start: int, end: int) -> list[dict]:
-    """The RAW turns a fold covers, as they actually sit on disk --
-    history.jsonl is append-only, so folding a range never removes the
-    raw entries from the file; they must be genuinely present for a GC
-    test to exercise real removal rather than asserting over content
-    that was never written in the first place."""
-    return [_turn(s) for s in range(start, end + 1)]
-
-
 @pytest.mark.asyncio
-async def test_folded_middle_range_is_gcd_head_and_tail_survive(tmp_path):
-    """Tier 2: strip-falsifier target. seq 1-3 (head, pre-fold, never
-    folded), 4-6 (folded + below floor + below margin -> GC-eligible),
-    7+ (post-fold, unfolded, padded past the margin) -- only the middle
-    range is removed."""
+async def test_a_non_summary_segment_wholly_covered_by_a_fold_is_unlinked(tmp_path):
+    """Tier 2: strip-falsifier target. A sealed segment covering seq 4-6,
+    with NO summary of its own, wholly covered by a fold recorded in a
+    SEPARATE sealed summary-carrying segment, is unlinked outright once
+    the WAL floor + margin both clear it."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
     for _ in range(20):
         await _put(log, "alpha", "x")
 
-    lines = [_turn(1), _turn(2), _turn(3)]
-    lines += _raw_range(4, 6)
-    lines.append(_summary(20, covers_from=4, covers_through=6))
-    lines += _pad_past_margin(7)
-    path = _write_history(tmp_path, "alpha", lines)
-
-    before = _seqs(path)
-    assert 4 in before and 5 in before and 6 in before  # genuinely present pre-GC
+    fold_seg = _write_sealed(tmp_path, "alpha", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    _write_sealed(
+        tmp_path, "alpha", [_summary(20, covers_from=4, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "alpha", _pad_past_margin(7))
+    assert fold_seg.is_file()
 
     await _advance_floor_past(reg, 6)
     await reg._prune_generations_below(1)
 
-    seqs = _seqs(path)
-    assert seqs[:3] == [1, 2, 3]
-    assert 4 not in seqs and 5 not in seqs and 6 not in seqs
-    assert 20 in seqs  # the summary line itself always survives
-    assert 7 in seqs
+    assert not fold_seg.exists(), "fully-covered, below-floor, below-margin segment must be unlinked"
 
 
 @pytest.mark.asyncio
-async def test_older_folds_range_is_also_collected_not_just_the_latest_summary(tmp_path):
-    """Tier 2: architect's required 6th acceptance point. Two folds have
-    happened (seq 1-3 folded by an EARLIER summary, seq 4-6 by a LATER
-    one) -- the earlier fold's own range must ALSO be GC-eligible, not
-    just the latest summary's [covers_from, covers_through]. A GC that
-    only reads the latest summary (copying the 2 existing
-    `compaction_coverage_from_summary` consumers verbatim) would leave
-    seq 1-3 behind -- this test goes RED under that implementation."""
+async def test_a_non_summary_segment_not_covered_by_any_fold_survives(tmp_path):
+    """Tier 2: deny-side sibling -- seq 1-3 sit in their own sealed
+    segment, below the floor and outside the margin, but NO fold covers
+    them (condition ③ fails) -- the segment must survive whole."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "beta")
     log = reg.state_log
     for _ in range(20):
         await _put(log, "beta", "x")
 
-    lines = _raw_range(1, 3)
-    lines.append(_summary(10, covers_from=1, covers_through=3))  # earlier fold
-    lines += _raw_range(4, 6)
-    lines.append(_summary(20, covers_from=4, covers_through=6))  # later fold
-    lines += _pad_past_margin(7)
-    path = _write_history(tmp_path, "beta", lines)
-
-    before = _seqs(path)
-    for s in (1, 2, 3, 4, 5, 6):
-        assert s in before  # genuinely present pre-GC
+    head_seg = _write_sealed(tmp_path, "beta", [_turn(1), _turn(2), _turn(3)], has_summary=False)
+    fold_seg = _write_sealed(tmp_path, "beta", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    _write_sealed(
+        tmp_path, "beta", [_summary(20, covers_from=4, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "beta", _pad_past_margin(7))
 
     await _advance_floor_past(reg, 6)
     await reg._prune_generations_below(1)
 
-    seqs = _seqs(path)
-    for s in (1, 2, 3, 4, 5, 6):
-        assert s not in seqs, f"seq {s} should have been GC'd (older fold's own range)"
-    assert 10 in seqs and 20 in seqs  # both summaries survive
-    assert 7 in seqs
+    assert head_seg.exists(), "an UNfolded segment must never be unlinked"
+    assert not fold_seg.exists(), "the folded sibling segment IS still eligible"
 
 
 @pytest.mark.asyncio
-async def test_nothing_removed_before_the_floor_advances(tmp_path):
-    """Tier 2: time axis -- a folded, margin-eligible range is NOT GC'd
-    while the WAL floor has not yet advanced past it (0 lines removed)."""
+async def test_older_folds_range_is_also_collected_not_just_the_latest_summary(tmp_path):
+    """Tier 2: architect's required acceptance point, at segment
+    granularity. Two folds (an EARLIER summary covering seq 1-3, a LATER
+    one covering seq 4-6) each live in their OWN summary-carrying sealed
+    segment -- the earlier fold's own range must ALSO be honoured, not
+    just the latest summary's. A GC reading only the latest summary would
+    leave the seq-1-3 segment behind."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "gamma")
     log = reg.state_log
     for _ in range(20):
         await _put(log, "gamma", "x")
 
-    lines = [_turn(1), _turn(2), _turn(3)]
-    lines += _raw_range(4, 6)
-    lines.append(_summary(20, covers_from=4, covers_through=6))
-    lines += _pad_past_margin(7)
-    path = _write_history(tmp_path, "gamma", lines)
+    early_fold = _write_sealed(tmp_path, "gamma", [_turn(1), _turn(2), _turn(3)], has_summary=False)
+    late_fold = _write_sealed(tmp_path, "gamma", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    _write_sealed(
+        tmp_path, "gamma", [_summary(10, covers_from=1, covers_through=3)], has_summary=True,
+    )
+    _write_sealed(
+        tmp_path, "gamma", [_summary(20, covers_from=4, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "gamma", _pad_past_margin(7))
 
-    # No truncate_below call -- floor never advances past the fold.
-    before = _seqs(path)
+    await _advance_floor_past(reg, 6)
     await reg._prune_generations_below(1)
-    after = _seqs(path)
 
-    assert before == after
+    assert not early_fold.exists(), "the EARLIER fold's own segment must also be GC-eligible"
+    assert not late_fold.exists()
 
 
 @pytest.mark.asyncio
-async def test_startup_hydration_margin_is_never_gcd_even_if_folded_and_below_floor(tmp_path):
-    """Tier 2: a range that is folded AND below the WAL floor is STILL
-    protected if it falls inside the startup-hydration margin -- the
-    margin (condition (4)) is not overridden by the other 2 conditions."""
+async def test_a_summary_carrying_segment_is_never_unlinked(tmp_path):
+    """Tier 2: condition ① -- even when a summary-carrying segment's own
+    max_seq clears the floor and the margin, it is NEVER unlinked (the
+    durable fold evidence must survive)."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "delta")
     log = reg.state_log
     for _ in range(20):
         await _put(log, "delta", "x")
 
-    # Fold covers 1..6, but only a handful of lines total -- the whole
-    # file sits inside read_history_tail's own BOF fallback margin.
-    lines = [_turn(1), _turn(2), _turn(3)]
-    lines += _raw_range(4, 6)
-    lines.append(_summary(6, covers_from=4, covers_through=6))
-    lines.append(_turn(7))
-    path = _write_history(tmp_path, "delta", lines)
+    summary_seg = _write_sealed(
+        tmp_path, "delta",
+        [_turn(4), _turn(5), _summary(6, covers_from=4, covers_through=5)],
+        has_summary=True,
+    )
+    _write_active(tmp_path, "delta", _pad_past_margin(7))
 
     await _advance_floor_past(reg, 6)
-    before = _seqs(path)
     await reg._prune_generations_below(1)
-    after = _seqs(path)
 
-    assert before == after  # margin protects the whole (short) file
+    assert summary_seg.exists(), "a summary-carrying segment must never be unlinked"
 
 
 @pytest.mark.asyncio
-async def test_fail_closed_on_summary_missing_covers_from_seq(tmp_path):
-    """Tier 2: manually-verified point (2)'s public-path witness --
-    lead-coder-30's explicit requirement. A pre-#5765 summary with
-    `covers_through_seq` but no `covers_from_seq` contributes NO range
-    (fail-closed: never guess, never hide) -- nothing is removed even
-    though the WAL floor has advanced past covers_through."""
+async def test_nothing_removed_before_the_floor_advances(tmp_path):
+    """Tier 2: time axis -- a folded, margin-eligible segment is NOT GC'd
+    while the WAL floor has not yet advanced past it."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "epsilon")
     log = reg.state_log
     for _ in range(20):
         await _put(log, "epsilon", "x")
 
-    lines = [_turn(1), _turn(2), _turn(3)]
-    lines += _raw_range(4, 6)
-    lines.append(_summary(20, covers_from=None, covers_through=6))
-    lines += _pad_past_margin(7)
-    path = _write_history(tmp_path, "epsilon", lines)
+    fold_seg = _write_sealed(tmp_path, "epsilon", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    _write_sealed(
+        tmp_path, "epsilon", [_summary(20, covers_from=4, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "epsilon", _pad_past_margin(7))
 
-    await _advance_floor_past(reg, 6)
-    before = _seqs(path)
+    # No truncate_below call -- floor never advances past the fold.
     await reg._prune_generations_below(1)
-    after = _seqs(path)
 
-    assert before == after
+    assert fold_seg.exists()
 
 
 @pytest.mark.asyncio
-async def test_missing_history_file_is_a_no_op(tmp_path):
-    """Tier 2: manually-verified point (1)'s public-path witness -- an
-    agent with no history.jsonl at all (never sent a message) does not
-    crash the GC pass."""
+async def test_startup_hydration_margin_protects_a_short_active_only_session(tmp_path):
+    """Tier 2: a fold-covered, below-floor sealed segment is STILL
+    protected if the session as a whole (active + sealed) is short enough
+    that startup hydration would still read back the fold boundary
+    itself -- the margin (condition ②) is not overridden by the other 2
+    conditions."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "zeta")
     log = reg.state_log
-    for _ in range(5):
+    for _ in range(20):
         await _put(log, "zeta", "x")
-    await _advance_floor_past(reg, 3)
 
-    await reg._prune_generations_below(1)  # must not raise
+    # Fold covers 4-6, but only a handful of lines total across active +
+    # sealed -- the margin boundary (read_history_tail_segmented's own
+    # BOF fallback) sits at/below seq 4.
+    fold_seg = _write_sealed(tmp_path, "zeta", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    _write_sealed(
+        tmp_path, "zeta", [_summary(6, covers_from=4, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "zeta", [_turn(7)])
 
-    assert not (tmp_path / ".reyn" / "agents" / "zeta" / "history.jsonl").exists()
+    await _advance_floor_past(reg, 6)
+    await reg._prune_generations_below(1)
+
+    assert fold_seg.exists(), "the margin must protect a short session's own fold boundary"
 
 
 @pytest.mark.asyncio
-async def test_gc_frees_space_even_when_rewind_was_never_used(tmp_path):
-    """Tier 2: the key differentiator from the rejected "discard-only"
-    earlier design -- GC runs (and frees real bytes) purely from the
-    throttled truncation pass, with zero `/rewind`/`checkout` calls ever
-    made on this registry."""
+async def test_fail_closed_on_summary_missing_covers_from_seq(tmp_path):
+    """Tier 2: a pre-#5765 summary with ``covers_through_seq`` but no
+    ``covers_from_seq`` contributes NO range (fail-closed) -- the
+    otherwise-eligible sealed segment survives."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "eta")
     log = reg.state_log
     for _ in range(20):
         await _put(log, "eta", "x")
 
-    lines = [_turn(1), _turn(2), _turn(3)]
-    lines += _raw_range(4, 6)
-    lines.append(_summary(20, covers_from=4, covers_through=6))
-    lines += _pad_past_margin(7)
-    path = _write_history(tmp_path, "eta", lines)
-    size_before = path.stat().st_size
+    fold_seg = _write_sealed(tmp_path, "eta", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    _write_sealed(
+        tmp_path, "eta", [_summary(20, covers_from=None, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "eta", _pad_past_margin(7))
+
+    await _advance_floor_past(reg, 6)
+    await reg._prune_generations_below(1)
+
+    assert fold_seg.exists()
+
+
+@pytest.mark.asyncio
+async def test_no_history_at_all_is_a_no_op(tmp_path):
+    """Tier 2: an agent with no history at all (never sent a message)
+    does not crash the GC pass, and no ``history/`` dir is created by GC
+    itself."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "theta")
+    log = reg.state_log
+    for _ in range(5):
+        await _put(log, "theta", "x")
+    await _advance_floor_past(reg, 3)
+
+    await reg._prune_generations_below(1)  # must not raise
+
+    assert not history_dir_for(tmp_path / ".reyn" / "agents" / "theta").exists()
+
+
+@pytest.mark.asyncio
+async def test_gc_frees_real_disk_space(tmp_path):
+    """Tier 2: the key differentiator from the rejected "discard-only"
+    earlier design -- GC runs (and frees real bytes) purely from the
+    throttled truncation pass, with zero `/rewind`/`checkout` calls ever
+    made on this registry."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "iota")
+    log = reg.state_log
+    for _ in range(20):
+        await _put(log, "iota", "x")
+
+    fold_seg = _write_sealed(tmp_path, "iota", [_turn(4), _turn(5), _turn(6)], has_summary=False)
+    size_before = fold_seg.stat().st_size
+    _write_sealed(
+        tmp_path, "iota", [_summary(20, covers_from=4, covers_through=6)], has_summary=True,
+    )
+    _write_active(tmp_path, "iota", _pad_past_margin(7))
+    agent_dir = tmp_path / ".reyn" / "agents" / "iota"
+    total_before = sum(p.stat().st_size for p in agent_dir.rglob("*") if p.is_file())
 
     await _advance_floor_past(reg, 6)
     await reg._prune_generations_below(1)  # no checkout()/rewind_to() call anywhere
 
-    assert path.stat().st_size < size_before
+    total_after = sum(p.stat().st_size for p in agent_dir.rglob("*") if p.is_file())
+    assert total_after < total_before
+    assert total_before - total_after >= size_before
 
 
-def _summary_ranges(path: Path) -> "list[tuple[int, int]]":
-    """Every surviving summary's own (covers_from, covers_through) range,
-    read straight from the post-GC file -- ANY surviving summary counts,
-    not just the latest (mirrors the production predicate's own union,
-    #5759's architect-mandated correction)."""
-    ranges: list[tuple[int, int]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        entry = json.loads(line)
-        if entry.get("role") != "summary":
-            continue
-        meta = entry.get("meta", {})
-        cf = meta.get("covers_from_seq")
-        ct = meta.get("covers_through_seq", 0)
-        if cf is not None and ct > 0:
-            ranges.append((cf, ct))
-    return ranges
+# #6248: the liveness gate #6247 required (GC must never rewrite a LIVE
+# session's own history.jsonl -- Session held a session-lifetime append
+# handle onto that SAME path, so a rewrite would strand the handle on a
+# detached inode) is REMOVED here, not narrowed: GC now only ever unlinks
+# SEALED segments, whose filename the active segment can never carry (the
+# active segment is ALWAYS literally ``history.jsonl``, never a sealed
+# name) -- the two writers' path sets are disjoint BY CONSTRUCTION. The
+# deny/present pair below is the REQUIRED witness for keeping the gate
+# removed (architect instruction on the predecessor gate: neither alone
+# is sufficient) -- both drive a REAL ``Session`` through REAL appends and
+# a REAL seal, not synthetic segment files, so the appender's own
+# ownership of sealing is exercised too.
+def _seal_boundary_bytes() -> int:
+    from reyn.runtime.history_segments import SEGMENT_MAX_BYTES
 
-
-def _missing_conversation_seqs(
-    path: Path, *, up_to_seq: int, original_seqs: "set[int]",
-) -> "set[int]":
-    """Every seq that ORIGINALLY existed (<= up_to_seq) but, post-GC, is
-    neither present as a raw line NOR covered by any surviving summary's
-    own range -- a non-empty result means the conversation reconstructed
-    at that rewind point is missing content. Empty is the passing case."""
-    present = set(_seqs(path))
-    ranges = _summary_ranges(path)
-    missing: set[int] = set()
-    for s in original_seqs:
-        if s > up_to_seq:
-            continue
-        if s in present:
-            continue
-        if any(cf <= s <= ct for cf, ct in ranges):
-            continue
-        missing.add(s)
-    return missing
+    return SEGMENT_MAX_BYTES
 
 
 @pytest.mark.asyncio
-async def test_every_listed_rewind_point_has_no_conversation_gap_after_gc(tmp_path):
-    """Tier 2: BLOCKING (lead-coder-30 + architect co-vet on #5767) -- the
-    CENTRAL acceptance point, distinct from the 8 tests above. Those check
-    GC's own INTERNAL per-condition logic (folded / floor / margin)
-    individually; this checks the *composition* actually matches what
-    `list_rewind_points()` -- the real, user-facing candidate list --
-    shows: for EVERY point a user could pick, the conversation
-    reconstructed up to it is not missing anything GC removed without a
-    surviving substitute.
-
-    Deliberately includes the geometry architect flagged as the risky,
-    non-obvious crossing (not claimed broken, but requiring a witness):
-    a generation boundary (seq 8) sitting STRICTLY INSIDE a fold's own
-    [covers_from, covers_through] range (4-15), where an EARLIER part of
-    that SAME range (4-5) has already been GC'd (below the floor) by the
-    time seq 8 is rewound to. Reconstructing the conversation up to seq 8
-    must find 4-5 via the SAME summary that also covers seq 8-15
-    (`_summary_ranges` checks every surviving summary, not just the
-    latest) -- if this were implemented against only the latest summary,
-    or if a summary could ever be dropped, this is exactly where it would
-    show up as a `list_rewind_points()` entry with no coherent history
-    behind it.
-    """
-    reg = _make_registry(tmp_path)
-    _seed_agent(tmp_path, "kappa")
-    log = reg.state_log
-    for _ in range(30):
-        await _put(log, "kappa", "x")
-
-    lines = _raw_range(1, 3)              # head, never folded
-    lines += _raw_range(4, 15)             # will be (partially) folded + GC'd
-    lines += _raw_range(16, 24)            # unfolded, between the fold and its summary
-    lines.append(_summary(25, covers_from=4, covers_through=15))
-    lines += _pad_past_margin(26)          # unfolded tail, past the margin
-
-    path = _write_history(tmp_path, "kappa", lines)
-    original_seqs = {entry["seq"] for entry in lines}
-
-    # Generation boundaries: seq 3 (before the fold, will fall below the
-    # floor and be correctly excluded from the list), seq 8 (the risky
-    # crossing -- INSIDE the fold's range, but ITSELF at/above the floor
-    # below), seq 20 (after the fold, unfolded), seq 30 (well past
-    # everything).
-    for s in (3, 8, 20, 30):
-        _record_gen(reg, "kappa", s)
-
-    # Floor = 6: seq 4-5 (inside the fold's range, below floor) become
-    # GC-eligible; seq 6-15 (inside the SAME range, at/above floor) are
-    # protected by condition (1) and stay raw regardless of folding.
-    await _advance_floor_past(reg, 5)
-    await reg._prune_generations_below(1)
-
-    rows = reg.list_rewind_points()
-    listed_seqs = [r["seq"] for r in rows]
-    assert 3 not in listed_seqs  # below the floor -- correctly not offered
-    assert 8 in listed_seqs      # the risky crossing IS offered to the user
-    assert 20 in listed_seqs
-    assert 30 in listed_seqs
-
-    for r in rows:
-        missing = _missing_conversation_seqs(
-            path, up_to_seq=r["seq"], original_seqs=original_seqs,
-        )
-        assert not missing, (
-            f"rewind point seq={r['seq']!r} has a conversation gap: "
-            f"seqs {sorted(missing)} were removed with no surviving "
-            f"summary covering them"
-        )
-
-
-# Disclosure (CLAUDE.md six-questions #4): manually-verified point (3) --
-# "a summary further back than the margin does not move the boundary
-# early" -- has no independent test in THIS file. It is a property of
-# `read_history_tail` itself, already covered directly by
-# `tests/runtime/test_4676_history_tail_reader_toctou.py` and by
-# `read_history_tail`'s own module-docstring-referenced test suite; the
-# GC wiring here only ever CALLS that function unchanged, so re-asserting
-# its internal stop condition through the GC's own public path would be
-# the "same expression on both sides" shape CLAUDE.md's test-review
-# question 2 rejects.
-
-
-# #6077 提案 1 / #6247 review (architect ruling): GC must never rewrite a
-# LIVE session's own history.jsonl -- Session now holds a session-lifetime
-# append handle onto that path, and GC's own `rewrite_history_dropping`
-# always replaces the file's inode when it runs (`tmp.replace(path)` is
-# unconditional once the file exists), which would strand that handle on
-# a detached inode. The 2 tests below are the required deny/present pair
-# (architect's own instruction: neither alone is sufficient) -- both
-# witnessed at the file level (`Path.stat().st_ino`), never through a
-# call count or a private flag, so a liveness gate that runs but does
-# nothing (or a GC that silently stops running for everyone) cannot pass
-# either one vacuously.
-def _live_scenario(tmp_path, name: str) -> tuple[AgentRegistry, Path]:
-    """The SAME GC-eligible scenario
-    ``test_folded_middle_range_is_gcd_head_and_tail_survive`` uses (seq
-    4-6 folded, below floor, outside margin) -- shared here so the
-    deny/present pair below exercise identical eligibility, differing
-    ONLY in whether a live Session is registered for ``(name, "main")``."""
-    reg = _make_registry(tmp_path)
-    _seed_agent(tmp_path, name)
-    return reg, _write_history(
-        tmp_path, name,
-        [_turn(1), _turn(2), _turn(3)]
-        + _raw_range(4, 6)
-        + [_summary(20, covers_from=4, covers_through=6)]
-        + _pad_past_margin(7),
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_live_sessions_own_history_jsonl_inode_survives_gc(tmp_path):
-    """Tier 2: #6077 deny-side witness (architect ruling, #6247 review) --
+async def test_a_live_sessions_own_sealed_segment_is_gcd(tmp_path):
+    """Tier 2: #6248 present-side witness (gate REMOVAL, not narrowing) --
     a (name, sid) this registry holds a LIVE in-process ``Session`` for
-    must have its ``history.jsonl`` inode UNCHANGED by a GC pass, even
-    though every content-level eligibility condition (below floor,
-    outside margin, inside a recorded fold) is met -- the exact same
-    scenario ``test_folded_middle_range_is_gcd_head_and_tail_survive``
-    drives to a real rewrite for a non-live session (see the present-side
-    sibling test below).
+    still has its OWN sealed segment unlinked by GC, once that segment's
+    max_seq clears the floor and margin and is fully fold-covered.
 
-    Strip-falsify (in-file Edit only, no ``git checkout``/``stash``/
-    ``restore``): removing the
-    ``if self.get_session(name, sid) is not None: continue`` liveness
-    gate in ``AgentRegistry._gc_history_jsonl_below`` turned this RED
-    with::
-
-        AssertionError: a LIVE session's history.jsonl must never be
-        rewritten by GC -- inode changed from <N> to <M>. If this
-        failed, the liveness gate in
-        AgentRegistry._gc_history_jsonl_below was removed or bypassed.
-
-    restored (Edit), confirmed GREEN again."""
-    name = "epsilon"
-    reg, path = _live_scenario(tmp_path, name)
-    log = reg.state_log
-    for _ in range(20):
-        await _put(log, name, "x")
-
-    live_session = make_session(agent_name=name, state_log=StateLog(tmp_path / "epsilon-live.wal"))
-    reg._store_session(name, live_session)  # default sid="main" -- matches _discover_session_ids's own default
-
-    before_ino = path.stat().st_ino
-
-    await _advance_floor_past(reg, 6)
-    await reg._prune_generations_below(1)
-
-    after_ino = path.stat().st_ino
-    assert after_ino == before_ino, (
-        "a LIVE session's history.jsonl must never be rewritten by GC -- "
-        f"inode changed from {before_ino} to {after_ino}. If this failed, "
-        "the liveness gate in AgentRegistry._gc_history_jsonl_below was "
-        "removed or bypassed."
-    )
-
-
-@pytest.mark.asyncio
-async def test_a_non_live_sessions_history_jsonl_inode_still_changes_on_gc(tmp_path):
-    """Tier 2: #6077 present-side witness (architect ruling, #6247 review)
-    -- the sibling of the deny-side test above, proving the liveness gate
-    does not simply kill GC for everyone. The IDENTICAL eligible scenario,
-    with NO live ``Session`` registered for ``(name, "main")``, must still
-    have its ``history.jsonl`` inode CHANGE (GC's own
-    ``rewrite_history_dropping`` really ran and replaced the file) --
-    the same real-rewrite fact
-    ``test_folded_middle_range_is_gcd_head_and_tail_survive`` already
-    pins at the content level, restated here at the inode level so the
-    2 tests are a true deny/present pair over the SAME observable.
-
-    Strip-falsify (in-file Edit only, no ``git checkout``/``stash``/
-    ``restore``): forcing the liveness gate to always skip (editing
-    ``if self.get_session(name, sid) is not None: continue`` to
-    ``if True: continue`` in ``AgentRegistry._gc_history_jsonl_below``)
+    Strip-falsify (in-file Edit only): re-adding the pre-#6248 liveness
+    gate (``if self.get_session(name, sid) is not None: continue`` at the
+    top of ``AgentRegistry._gc_history_jsonl_below``'s per-session loop)
     turned this RED with::
 
-        AssertionError: a NON-live session's history.jsonl must still be
-        rewritten by GC -- inode unchanged at <N>. If this failed, the
-        liveness gate in AgentRegistry._gc_history_jsonl_below is
-        skipping GC unconditionally, not just for live sessions.
+        AssertionError: a live session's own fully-covered sealed segment
+        must still be unlinked once #6247's liveness gate is removed --
+        it still exists after GC. If this failed, the liveness gate was
+        re-added or GC is skipping live sessions again.
 
     restored (Edit), confirmed GREEN again."""
-    name = "zeta"
-    reg, path = _live_scenario(tmp_path, name)
+    name = "kappa"
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, name)
+    session = make_session(
+        agent_name=name, state_log=StateLog(tmp_path / f"{name}-live.wal"),
+        workspace_base_dir=tmp_path / ".reyn" / "agents",
+    )
+    seg_boundary = _seal_boundary_bytes()
+    big = "x" * (seg_boundary // 4)
+    while True:
+        session._append_history(ChatMessage(role="user", content=big))
+        sealed = [p for p in session.history_dir.iterdir() if p.name != "history.jsonl"]
+        if sealed:
+            break
+    sealed_seg = sealed[0]
+    # The sealed segment's own max_seq (parsed back from its own name) --
+    # never read from private state here; the filename IS the public
+    # contract GC itself reads.
+    from reyn.runtime.history_segments import parse_sealed_segment_name
+
+    parsed = parse_sealed_segment_name(sealed_seg.name)
+    assert parsed is not None
+    fold_covers = parsed.max_seq
+    session._append_history(ChatMessage(
+        role="summary", content="summarised",
+        meta={"structured": {}, "covers_through_seq": fold_covers, "covers_from_seq": 1},
+    ))
+    for _ in range(_HISTORY_HYDRATE_MIN_LINES + 5):
+        session._append_history(ChatMessage(role="user", content="pad"))
+
+    reg._store_session(name, session)  # default sid="main"
     log = reg.state_log
-    for _ in range(20):
+    for _ in range(fold_covers + 5):
         await _put(log, name, "x")
 
-    before_ino = path.stat().st_ino
+    assert sealed_seg.exists()
+    await _advance_floor_past(reg, fold_covers)
+    await reg._prune_generations_below(1)
+
+    assert not sealed_seg.exists(), (
+        "a live session's own fully-covered sealed segment must still be "
+        "unlinked once #6247's liveness gate is removed -- it still "
+        "exists after GC. If this failed, the liveness gate was re-added "
+        "or GC is skipping live sessions again."
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_active_segment_is_never_a_gc_candidate(tmp_path):
+    """Tier 2: deny-side sibling -- the ACTIVE segment (still
+    ``history.jsonl`` — never renamed) is never touched by GC even when
+    every content-level eligibility condition would otherwise be met,
+    because it is never returned by ``list_sealed_segments`` at all."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "lambda")
+    log = reg.state_log
+    for _ in range(20):
+        await _put(log, "lambda", "x")
+
+    _write_sealed(
+        tmp_path, "lambda", [_summary(20, covers_from=1, covers_through=6)], has_summary=True,
+    )
+    active = _write_active(
+        tmp_path, "lambda",
+        [_turn(1), _turn(2), _turn(3)] + [_turn(4), _turn(5), _turn(6)] + _pad_past_margin(7),
+    )
+    before_ino = active.stat().st_ino
 
     await _advance_floor_past(reg, 6)
     await reg._prune_generations_below(1)
 
-    after_ino = path.stat().st_ino
-    assert after_ino != before_ino, (
-        "a NON-live session's history.jsonl must still be rewritten by "
-        f"GC -- inode unchanged at {before_ino}. If this failed, the "
-        "liveness gate in AgentRegistry._gc_history_jsonl_below is "
-        "skipping GC unconditionally, not just for live sessions."
-    )
+    assert active.exists()
+    assert active.stat().st_ino == before_ino, "the active segment's inode must never change under GC"

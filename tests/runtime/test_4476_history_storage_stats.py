@@ -162,6 +162,47 @@ def test_aggregate_finds_a_nested_spawned_session_history_too(tmp_path: Path):
     assert stats.total_lines == 3
 
 
+def test_aggregate_counts_sealed_segments_too(tmp_path: Path):
+    """Tier 2: #6240/#6248 — a SEALED segment
+    (``<agent>/history/history-<min>-<max>-<s|n>.jsonl``) is real disk
+    usage and must be counted, or the arc's own headline number (547 MB)
+    under-reports. Deny-side sibling of
+    ``test_aggregate_sums_across_multiple_agents`` — a project whose ONLY
+    history content is sealed segments (the active segment has already
+    rotated past them) must still report a nonzero total, not silently
+    drop to 0 bytes / 0 files."""
+    hist_dir = tmp_path / ".reyn" / "agents" / "carol" / "history"
+    _write_history(hist_dir / "history.jsonl", ['{"seq": 3}'])
+    _write_history(
+        hist_dir / "history-000000000001-000000000002-n.jsonl",
+        ['{"seq": 1}', '{"seq": 2}'],
+    )
+
+    stats = aggregate_history_stats(tmp_path)
+
+    assert stats.file_count == 2, "the active segment AND the sealed one must both be counted"
+    assert stats.total_lines == 3
+    expected_bytes = (
+        (hist_dir / "history.jsonl").stat().st_size
+        + (hist_dir / "history-000000000001-000000000002-n.jsonl").stat().st_size
+    )
+    assert stats.total_bytes == expected_bytes
+
+
+def test_aggregate_does_not_double_count_or_miss_the_old_flat_file(tmp_path: Path):
+    """Tier 2: an agent that never ran a turn since the #6248 upgrade
+    still has ONLY the pre-segment flat file (no ``history/`` directory
+    at all yet) — the disk-usage report must still count it (it is real
+    disk usage new code simply never reads), exactly once."""
+    agents = tmp_path / ".reyn" / "agents"
+    _write_history(agents / "dave" / "history.jsonl", ['{"seq": 1}', '{"seq": 2}'])
+
+    stats = aggregate_history_stats(tmp_path)
+
+    assert stats.file_count == 1
+    assert stats.total_lines == 2
+
+
 def test_aggregate_never_writes_anything(tmp_path: Path):
     """Tier 2: (accept-side) calling aggregate_history_stats repeatedly
     does not mutate any discovered file or create new ones."""

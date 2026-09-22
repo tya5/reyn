@@ -1642,23 +1642,56 @@ class Session:
 
         # agents/<name>/ is state-only (PR20); Agent-derived workspace_dir, ensure it exists (FP-0043 Stage 2)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
-        self.history_path = self.workspace_dir / "history.jsonl"
-        # #6077 提案 1: a session-lifetime append handle for history.jsonl —
-        # opened lazily (first ``_append_history`` call), reused for every
-        # subsequent append (``write`` + ``flush``, never a per-message
-        # ``open``/``close``). Real-time AV on the owner's Windows machine
-        # hooks file OPEN, not write/flush — 1 ``open`` per message meant 1
-        # AV scan per message against a file measured at 547 MB (#6240).
+        # #6240/#6248: the segment layout supersedes the old single flat
+        # ``history.jsonl`` (architect design, issue #6248 comments
+        # 5772696821 + 5772712797 — the second one is the CURRENT ruling).
+        # ``history_dir`` holds the ACTIVE segment (always named
+        # ``history.jsonl`` — ``history_path`` below) plus zero or more
+        # SEALED segments (``history-<min_seq>-<max_seq>-<s|n>.jsonl``,
+        # renamed out of the appender's way by :meth:`_maybe_seal_active_
+        # history_segment`, never written to again). The OLD flat
+        # ``<workspace_dir>/history.jsonl`` (no ``history/`` directory
+        # around it) is deliberately NOT this attribute's concern at all —
+        # new code never opens or deletes it (owner ruling: "旧形式の1本
+        # fileを見つけても触らない" — see ``reyn.runtime.history_segments``'
+        # own module docstring for the full reasoning).
+        from reyn.runtime.history_segments import active_segment_path, history_dir_for
+        self.history_dir = history_dir_for(self.workspace_dir)
+        self.history_path = active_segment_path(self.history_dir)
+        # #6248 ③: the 3 facts the appender tracks about its OWN active
+        # segment so it can seal it (rename + record seq range + summary
+        # presence in the new name) without ever re-reading the file it
+        # just wrote — see :meth:`_maybe_seal_active_history_segment`.
+        # ``None`` means "nothing appended to the CURRENT active segment
+        # yet" (freshly opened or freshly sealed) — distinct from 0, which
+        # is never a real seq (#3704: every persisted entry gets seq >= 1).
+        self._active_segment_min_seq: "int | None" = None
+        self._active_segment_max_seq: "int | None" = None
+        self._active_segment_has_summary: bool = False
+        # #6077 提案 1: a session-lifetime append handle for the ACTIVE
+        # segment — opened lazily (first ``_append_history`` call), reused
+        # for every subsequent append (``write`` + ``flush``, never a
+        # per-message ``open``/``close``). Real-time AV on the owner's
+        # Windows machine hooks file OPEN, not write/flush — 1 ``open``
+        # per message meant 1 AV scan per message against a file measured
+        # at 547 MB (#6240).
         # Owned and closed in exactly ONE place each: opened lazily by
         # ``_history_append_handle``, closed by
         # ``_invalidate_history_append_handle`` from ``run()``'s own
-        # teardown ``finally`` — the session's one end-of-life point.
-        # ``Registry._gc_one_session_history`` (#5759 stage 2) is the only
-        # OTHER writer of this path, and it never touches a LIVE session's
-        # own ``history.jsonl`` at all (architect ruling, #6247 review —
-        # ``Registry._gc_history_jsonl_below``'s own liveness gate excludes
-        # any ``(name, sid)`` this registry holds a live ``Session`` for),
-        # so there is no second opener/invalidator to coordinate with here.
+        # teardown ``finally`` — the session's one end-of-life point (and,
+        # #6248, transiently by :meth:`_maybe_seal_active_history_segment`
+        # itself when it seals mid-session, immediately reopened against
+        # the fresh active segment by the very next
+        # ``_history_append_handle`` call). ``Registry._gc_one_session_
+        # history`` (#5759 stage 2 / #6248) is the only OTHER writer this
+        # path ever had, and it NEVER touches the active segment at all
+        # any more (#6248: GC only ever unlinks SEALED segments by name —
+        # the active segment's own name, ``history.jsonl``, never matches
+        # a sealed-segment filename, so the 2 writers' path sets are
+        # disjoint BY CONSTRUCTION, not by a liveness check GC has to get
+        # right — see ``AgentRegistry._gc_one_session_history``'s own
+        # docstring, and #6248's own review for why this replaces #6247's
+        # liveness gate rather than narrowing its window).
         self._history_append_fh: "Any" = None
         self.events_dir = (  # PR20: audit events dir, created lazily by EventStore on first write
             # #3705: anchored on the same root as workspace_dir — was a bare
@@ -4447,23 +4480,89 @@ class Session:
         # buffer happened to fill or the process exited — silently
         # breaking the synchronous "appended ⇒ readable" contract every
         # caller of ``_append_history`` relies on.
+        #
+        # #6248 ③: check-then-seal BEFORE this write, not after — "自分の
+        # write の直前に rename" (architect design). Sealing here (not in
+        # a background pass) is what makes it O(1) and race-free: nobody
+        # else can observe or act on the boundary crossing between this
+        # check and the write that follows it, because ``_append_history``
+        # itself is synchronous end-to-end.
+        self._maybe_seal_active_history_segment()
         f = self._history_append_handle()
         f.write(json.dumps(history_record(msg), ensure_ascii=False) + "\n")
         f.flush()
+        # #6248 ②: record this write against the ACTIVE segment's own
+        # running facts — what the NEXT seal (above, on a future call)
+        # will encode into the sealed filename. Updated only after a
+        # successful write, so a flush that raises never claims content
+        # that didn't actually land on disk.
+        if self._active_segment_min_seq is None:
+            self._active_segment_min_seq = msg.seq
+        self._active_segment_max_seq = msg.seq
+        if msg.role == "summary":
+            self._active_segment_has_summary = True
         self._evict_oldest_resident_entries()
         self._update_untrusted_taint_on_append(msg)
 
+    def _maybe_seal_active_history_segment(self) -> None:
+        """#6240/#6248 ②③: seal the CURRENT active segment (rename it to a
+        sealed-segment filename encoding its own ``[min_seq, max_seq]``
+        and whether it carries a ``role="summary"`` line) once its on-disk
+        size reaches :data:`~reyn.runtime.history_segments.
+        SEGMENT_MAX_BYTES` — checked here, at the START of every
+        :meth:`_append_history` call, before this call's own write, so a
+        segment is never sealed mid-write and the boundary check always
+        sees a fully-flushed size.
+
+        A no-op whenever there is nothing TO seal: no handle open yet
+        (nothing has ever been appended this process), or the active
+        segment has received no appends since it was last opened/sealed
+        (``_active_segment_max_seq is None`` — sealing an empty file would
+        produce a degenerate ``min_seq > max_seq`` name with nothing
+        real to bound)."""
+        if self._history_append_fh is None:
+            return
+        if self._active_segment_max_seq is None:
+            return
+        try:
+            size = self.history_path.stat().st_size
+        except FileNotFoundError:
+            return
+        from reyn.runtime.history_segments import SEGMENT_MAX_BYTES, sealed_segment_name
+
+        if size < SEGMENT_MAX_BYTES:
+            return
+        self._history_append_fh.close()
+        self._history_append_fh = None
+        sealed_name = sealed_segment_name(
+            self._active_segment_min_seq, self._active_segment_max_seq,
+            has_summary=self._active_segment_has_summary,
+        )
+        self.history_path.rename(self.history_path.parent / sealed_name)
+        self._active_segment_min_seq = None
+        self._active_segment_max_seq = None
+        self._active_segment_has_summary = False
+
     def _history_append_handle(self) -> "Any":
         """Return this session's own lazily-opened, session-lifetime append
-        handle onto :attr:`history_path` (#6077 提案 1) — opened at most
-        once per (re)open cycle, reused by every :meth:`_append_history`
-        call until :meth:`_invalidate_history_append_handle` closes it.
+        handle onto :attr:`history_path` — its ACTIVE segment (#6077 提案
+        1 / #6248) — opened at most once per (re)open cycle, reused by
+        every :meth:`_append_history` call until either
+        :meth:`_invalidate_history_append_handle` (session teardown) or
+        :meth:`_maybe_seal_active_history_segment` (mid-session seal, the
+        NEXT call reopening lazily below against the fresh active segment
+        that seal just created) closes it.
 
         Lazy, not eager at ``__init__`` time: a session whose turn loop
         never appends (e.g. one that only reads/hydrates) never touches the
         filesystem for this — matching the old per-call ``open``'s own
-        laziness (it never opened until the first append either)."""
+        laziness (it never opened until the first append either).
+        ``history_dir`` is created here too (``mkdir`` is idempotent) —
+        the ONE place a fresh active segment ever needs its parent
+        directory to exist, whether that is this session's very first
+        append ever or the first append after a seal."""
         if self._history_append_fh is None:
+            self.history_dir.mkdir(parents=True, exist_ok=True)
             self._history_append_fh = self.history_path.open("a", encoding="utf-8")
         return self._history_append_fh
 
@@ -4476,17 +4575,17 @@ class Session:
         ONE caller: ``run()``'s own teardown ``finally`` — the session's
         end-of-life point; an un-invalidated handle leaking past it is a
         Windows file lock (owner-hit failure mode named in #6077's own
-        brief). ``Registry._gc_one_session_history`` (#5759 stage 2) is
-        NOT a second caller (architect ruling, #6247 review): that path's
-        own ``rewrite_history_dropping`` always replaces ``history.jsonl``'s
-        inode when it runs (``tmp.replace(path)`` is unconditional once the
-        file exists), which WOULD strand a handle opened before the
-        replace — but ``Registry._gc_history_jsonl_below``'s own liveness
-        gate keeps that rewrite from ever reaching a ``(name, sid)`` this
-        registry holds a live ``Session`` for in the first place, so there
-        is nothing here to invalidate on the GC side. One path, one file,
-        one writer per liveness state — never two openers of the same
-        handle to coordinate.
+        brief). ``AgentRegistry._gc_one_session_history`` (#5759 stage 2)
+        is NOT a second caller (#6248 supersedes the #6247 liveness-gate
+        reasoning this docstring used to give): GC never renames or
+        rewrites the ACTIVE segment at all any more — it only ever
+        unlinks SEALED segments (whose filename can never equal
+        ``history.jsonl``, the active segment's one fixed name), so there
+        is no inode this handle points at that GC could ever replace out
+        from under it. The former liveness gate existed to manage a
+        conflict over the SAME path; #6248 removes the conflict itself by
+        giving the two writers disjoint path sets, so the gate is gone
+        (see ``AgentRegistry._gc_history_jsonl_below``'s own docstring).
 
         Best-effort close (mirrors every other teardown step in ``run()``'s
         own ``finally`` chain — a close failure must never block session
@@ -4502,6 +4601,75 @@ class Session:
                 "Session._invalidate_history_append_handle: close() raised for agent '%s'",
                 self.agent_name, exc_info=True,
             )
+
+    def clear_history(self) -> int:
+        """Wipe this session's chat history, in-memory AND on disk, and
+        resume appending into a FRESH active segment. Returns the number
+        of turns cleared (``len(self.history)`` as it stood before this
+        call).
+
+        #6240/#6248 (architect ruling on PR #6257's own review, issuecomment
+        -5773552909): the destructive-write-with-a-held-handle ordering
+        was previously commented on inline in ``clear_history.py`` (the
+        slash handler) — moved HERE because handler-side, it could only
+        ever touch ``history_path``/``history_dir`` (both public
+        attributes; the ordering invariant a slash module has no way to
+        enforce lives on the object that owns the handle). This is a
+        PUBLISHED session operation (not a private residue entry): #3595
+        S4's own gate rejects declaring it as residue instead, because
+        every EXISTING declared-residue member is a READ — this is a
+        destructive WRITE with a file-handle ordering invariant, a
+        different class entirely (the gate's own name, "the residue
+        SHRINKS", already rules out adding a new write to it). Routing it
+        through the transport/client layer instead is not a style
+        preference either: #6247/#6251 already closed, twice, the exact
+        defect class "something other than the appender renames/deletes
+        the active segment out from under a held-open handle" — a
+        transport has no access to that handle, so it cannot safely
+        delete ``history_dir`` at all while this session is live.
+
+        ⭐ **Order is the invariant — do not reorder these 4 steps**:
+
+        1. **Close the handle first.** ``run()``'s own teardown already
+           establishes this shape (:meth:`_invalidate_history_append_
+           handle`) — an open handle must never outlive the file it
+           points at being removed out from under it (the #6247/#6251
+           class again, now self-inflicted if skipped here).
+        2. **Delete the WHOLE `history/` directory** — every segment,
+           active AND sealed (#6248's own named defect: removing only
+           the active file leaves sealed segments behind, so the NEXT
+           restart's hydration reads old turns right back in and
+           ``/clear`` looks like it worked and silently reverts). If this
+           raises, steps 3-4 never run — ``self.history`` (step 4) is
+           UNTOUCHED, so a disk failure never leaves memory and disk
+           disagreeing about what survived (mirrors the pre-#6248 handler
+           logic byte-for-byte, just moved here with the handle-close
+           now folded in ahead of it).
+        3. **Open a fresh active segment** — the NEXT append must not
+           silently recreate the OLD (just-deleted) segment's own
+           tracking state (``_active_segment_min_seq`` etc. reset to
+           ``None`` here too, same reasoning the old ``_reset_history_
+           disk_state`` docstring gave: a stale ``min_seq`` baked into a
+           future sealed-segment filename is a wrong fact GC trusts
+           without ever reading the file to check it).
+        4. **Clear ``self.history`` last** — after disk has genuinely
+           succeeded, never before (see step 2).
+
+        The caller (``clear_history.py``'s slash handler) keeps only the
+        confirm-flow UX: the two-step confirmation prompt, the
+        ``Currently: N turns`` line, and the success/error reply text."""
+        n_turns_before = len(self.history)
+        self._invalidate_history_append_handle()
+        self._active_segment_min_seq = None
+        self._active_segment_max_seq = None
+        self._active_segment_has_summary = False
+        if self.history_dir.is_dir():
+            for entry in self.history_dir.iterdir():
+                entry.unlink(missing_ok=True)
+            self.history_dir.rmdir()
+        self._history_append_handle()  # opens the fresh active segment now, not lazily
+        self.history.clear()
+        return n_turns_before
 
     def _enforce_per_message_content_cap(self, msg: ChatMessage) -> None:
         """#6042 — the per-message durable-content byte cap, checked at
@@ -4957,9 +5125,12 @@ class Session:
           never skipping — rather than materializing the whole backlog in
           one call.
         """
-        from reyn.runtime.history_tail_reader import read_history_after
+        from reyn.runtime.history_segments import all_segment_paths_oldest_first
+        from reyn.runtime.history_tail_reader import read_history_after_segmented
 
-        lines, truncated = read_history_after(self.history_path, after_seq=after_seq)
+        lines, truncated = read_history_after_segmented(
+            all_segment_paths_oldest_first(self.history_dir), after_seq=after_seq,
+        )
         parsed = [
             m for line in lines
             if (m := self._parse_history_line(line)) is not None
@@ -5585,10 +5756,12 @@ class Session:
         Returns an empty list when nothing qualifies (already at the
         file's start, or every line failed to parse) — callers treat that
         as "prepend nothing," identically."""
-        from reyn.runtime.history_tail_reader import read_history_before
+        from reyn.runtime.history_segments import all_segment_paths_newest_first
+        from reyn.runtime.history_tail_reader import read_history_before_segmented
 
-        lines = read_history_before(
-            self.history_path, before_seq=before_seq, min_lines=min_lines,
+        lines = read_history_before_segmented(
+            all_segment_paths_newest_first(self.history_dir),
+            before_seq=before_seq, min_lines=min_lines,
         )
         if not lines:
             return []
@@ -5761,18 +5934,37 @@ class Session:
             self._emit_process_footprint()
 
     def _load_history_body(self) -> None:
-        """The actual hydrate logic — extracted, unchanged, from
+        """The actual hydrate logic — extracted, unchanged in SHAPE, from
         ``load_history`` (#5851 stage (a)) so that method's own ``finally``
         wrapper covers every exit path (early return, fast path, fallback
-        path) with ONE emit call rather than three."""
-        if not self.history_path.exists():
-            return
+        path) with ONE emit call rather than three.
+
+        #6240/#6248: segment-aware. ``self.history_path`` alone (the
+        ACTIVE segment) is not the whole story any more — a session that
+        sealed a segment on its previous run and exited before writing
+        anything new has content ONLY in a sealed segment, with the
+        active segment not yet existing at all. The "peek the last line"
+        fast path therefore peeks the NEWEST segment overall (active if
+        it has content, else the newest sealed one), not
+        ``self.history_path`` specifically."""
+        from reyn.runtime.history_segments import (
+            all_segment_paths_newest_first,
+            all_segment_paths_oldest_first,
+        )
         from reyn.runtime.history_tail_reader import (
-            read_history_tail_with_byte_budget,
+            read_history_tail_with_byte_budget_segmented,
             read_last_line,
         )
 
-        last_line = read_last_line(self.history_path)
+        newest_first = all_segment_paths_newest_first(self.history_dir)
+        if not newest_first:
+            return
+
+        last_line = None
+        for path in newest_first:
+            last_line = read_last_line(path)
+            if last_line is not None:
+                break
         last_seq = 0
         if last_line is not None:
             try:
@@ -5789,8 +5981,8 @@ class Session:
             # (architect ruling, #5851 comment 11 — "先に効かせるだけ",
             # not a new mechanism), applied live during the read instead
             # of post-hoc.
-            lines, truncated_unsafe = read_history_tail_with_byte_budget(
-                self.history_path,
+            lines, truncated_unsafe = read_history_tail_with_byte_budget_segmented(
+                newest_first,
                 min_lines=_HISTORY_HYDRATE_MIN_LINES,
                 max_bytes=int(self._history_resident_config.max_bytes),
             )
@@ -5810,13 +6002,15 @@ class Session:
             self._recompute_untrusted_taint_active()
             return
 
-        # Fallback: full forward read, full scan — see docstring above.
-        with self.history_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                self._append_parsed_history_line(line)
+        # Fallback: full forward read, full scan across every segment
+        # oldest-first — see docstring above.
+        for path in all_segment_paths_oldest_first(self.history_dir):
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    self._append_parsed_history_line(line)
         # #3704: entries persisted before the role-gate removal (assistant/
         # tool turns from the old buggy path) have seq==0 and stay that
         # way forever — nothing re-derives or backfills a coordinate for

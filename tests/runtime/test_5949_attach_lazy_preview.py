@@ -394,6 +394,10 @@ async def test_same_ref_is_read_once_per_pass_even_with_two_referencing_rows(
         })
         for seq in (1, 2)
     ]
+    # #6240/#6248: the active segment's parent (``history/``) is created
+    # lazily by the real append path — this test writes the file directly,
+    # bypassing that, so it must create the directory itself.
+    session.history_path.parent.mkdir(parents=True, exist_ok=True)
     session.history_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     session._media_store = store
 

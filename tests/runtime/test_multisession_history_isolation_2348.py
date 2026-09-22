@@ -169,5 +169,11 @@ def test_main_session_keeps_legacy_name_only_paths(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     main = reg.get_or_load("alice")
-    assert main.history_path == tmp_path / ".reyn" / "agents" / "alice" / "history.jsonl"
+    # #6240/#6248: the active segment now lives inside a per-session
+    # ``history/`` directory (``history_dir_for``) — the path is still
+    # name-only/legacy-rooted at ``<name>/`` (no per-sid re-key for the
+    # main session), just one level deeper than the pre-segment flat file.
+    assert main.history_path == (
+        tmp_path / ".reyn" / "agents" / "alice" / "history" / "history.jsonl"
+    )
     assert main.events_dir == tmp_path / ".reyn" / "events" / "agents" / "alice" / "chat"

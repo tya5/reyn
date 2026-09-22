@@ -9,6 +9,17 @@ handler made on confirm (the "hot list" tracker's own reset, distinct from
 history clearing) — removed with the hot-list feature (owner directive:
 discarded). ``_format_currently_line`` and the handler now only ever read
 ``session.history``.
+
+#6240/#6248 (architect ruling, PR #6257 issuecomment-5773552909): the
+actual disk wipe moved to a PUBLISHED ``Session.clear_history()``
+operation — this file's own concern is the HANDLER's routing/reply-text
+paths, so ``_FakeSession.clear_history()`` here is a minimal stand-in
+(count + list-clear, or raise) rather than real segment-directory
+semantics; the real on-disk behavior (and its 3 architect-required
+witnesses) lives in ``tests/runtime/test_6240_6248_history_segments.py``,
+and the slash-level end-to-end disk contract in
+``tests/interfaces/test_clear_history_slash_command.py`` (real
+``Session``, not a fake).
 """
 from __future__ import annotations
 
@@ -39,11 +50,24 @@ class _FakeSession:
         self,
         *,
         history: list | None = None,
-        history_path=None,
+        fail_disk: bool = False,
     ) -> None:
         self.history = history
-        self.history_path = history_path
+        self.history_dir = "<fake history dir>"
+        self._fail_disk = fail_disk
         self._outbox: list[OutboxMessage] = []
+
+    def clear_history(self) -> int:
+        """Minimal stand-in for ``Session.clear_history`` — same contract
+        (raise before touching ``history`` on a disk failure; otherwise
+        clear ``history`` and return the pre-clear count), no real
+        filesystem involved."""
+        if self._fail_disk:
+            raise OSError("permission denied")
+        n_before = len(self.history) if isinstance(self.history, list) else 0
+        if isinstance(self.history, list):
+            self.history.clear()
+        return n_before
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         self._outbox.append(msg)
@@ -130,13 +154,6 @@ async def test_clear_history_confirm_nothing_to_clear() -> None:
     assert "nothing" in text.lower() or "empty" in text.lower()
 
 
-class _FailingPath:
-    """Stub Path that raises OSError on unlink — simulates a write-protected file."""
-
-    def unlink(self, missing_ok: bool = False) -> None:
-        raise OSError("permission denied")
-
-
 def test_clear_alias_registered() -> None:
     """Tier 2: /clear is a registered alias for /clear-history so CC users don't hit
     'unknown command /clear'."""
@@ -148,7 +165,8 @@ def test_clear_alias_registered() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
-    """Tier 2: when history_path.unlink() fails, in-memory history must NOT be cleared.
+    """Tier 2: when the ``history/`` directory deletion fails, in-memory
+    history must NOT be cleared.
 
     Falsification (old code): the old ordering cleared memory BEFORE the disk
     deletion attempt.  Under the old code this test would fail because history
@@ -156,15 +174,15 @@ async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
     causes history to silently reload on next startup.
     """
     history: list = ["turn1", "turn2"]
-    session = _FakeSession(history=history, history_path=_FailingPath())
+    session = _FakeSession(history=history, fail_disk=True)
     await clear_history_cmd(_ctx(session), "confirm")
 
     # Memory must be unchanged — disk failed so nothing was committed.
     assert history == ["turn1", "turn2"], (
         "in-memory history was cleared even though disk deletion failed; "
         "old code cleared memory first then returned on OSError, leaving "
-        "history empty in-memory but history.jsonl intact on disk — "
+        "history empty in-memory but the history/ dir intact on disk — "
         "next startup would silently reload old turns"
     )
     # Must have emitted an error reply (not a success).
-    assert session.error_text(), "expected an error reply when unlink raises OSError"
+    assert session.error_text(), "expected an error reply when the directory removal raises OSError"

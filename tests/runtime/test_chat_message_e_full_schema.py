@@ -227,7 +227,11 @@ def test_load_history_migrates_legacy_lines(tmp_path: Path) -> None:
     from reyn.runtime.session import Session
 
     session = Session.__new__(Session)  # bypass __init__
-    session.history_path = tmp_path / "history.jsonl"
+    # #6240/#6248: load_history's own body now reads ``history_dir`` (the
+    # segment directory), not ``history_path`` alone — both must be set
+    # for a bypass construction like this one.
+    session.history_dir = tmp_path / "history"
+    session.history_path = session.history_dir / "history.jsonl"
     session.history = []
     session._next_seq = 1  # touched by post-load init; safe default
     # #5851 stage (a): load_history()'s own finally now reads
@@ -250,6 +254,7 @@ def test_load_history_migrates_legacy_lines(tmp_path: Path) -> None:
         {"role": "agent", "text": "hello", "ts": "t2",
          "meta": {"chain_id": "abc"}},
     ]
+    session.history_path.parent.mkdir(parents=True, exist_ok=True)
     session.history_path.write_text(
         "\n".join(json.dumps(line) for line in legacy_lines) + "\n",
         encoding="utf-8",

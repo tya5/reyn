@@ -231,19 +231,26 @@ def test_a_capped_batch_makes_honest_incremental_progress_across_passes(
     for i in range(30):
         asyncio.run(_turn(s, state_log, f"turn-{i} {pad}"))
 
+    # #6240/#6248: Session._durable_active_history_after now reads via the
+    # segment-aware sibling (`read_history_after_segmented`, sourced from
+    # `history_segments.all_segment_paths_oldest_first`), not the single-
+    # path `read_history_after` this test used to patch -- the real
+    # backlog above is well under one segment's own size boundary, so it
+    # is still ONE path handed to the segmented reader; only the call
+    # target's NAME changed, not the shape being forced.
     import reyn.runtime.history_tail_reader as htr
-    orig_reader = htr.read_history_after
+    orig_reader = htr.read_history_after_segmented
 
-    def _tiny_batch_reader(path, *, after_seq, max_bytes=8 * 1024 * 1024):
+    def _tiny_batch_reader(paths, *, after_seq, max_bytes=8 * 1024 * 1024):
         # Force a batch cap small enough to guarantee truncation against
         # the ~120KB backlog above, while still leaving enough headroom
         # over head_budget+tail_budget (~74+112 tokens ~ a few hundred
         # bytes with chars4) for real middle candidates to survive --
         # the exact sizing constraint this PR's own docstring measurement
         # documents.
-        return orig_reader(path, after_seq=after_seq, max_bytes=20_000)
+        return orig_reader(paths, after_seq=after_seq, max_bytes=20_000)
 
-    monkeypatch.setattr(htr, "read_history_after", _tiny_batch_reader)
+    monkeypatch.setattr(htr, "read_history_after_segmented", _tiny_batch_reader)
 
     result1 = asyncio.run(_run_and_settle(s._compact_now_for_op(), s))
     assert result1["summarized_turns"] > 0, "sanity: the first pass must make real progress"
