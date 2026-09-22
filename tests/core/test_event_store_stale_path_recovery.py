@@ -78,20 +78,26 @@ def test_stale_path_recovery_after_rmtree(tmp_path: pytest.TempPathFactory) -> N
 def test_stale_path_recovery_bounded_retry(tmp_path: pytest.TempPathFactory) -> None:
     """Tier 2: EventStore bounded retry — if recovery also fails, re-raise.
 
-    Simulates two consecutive failures without mocks by making the parent
-    directory unwritable after the first write. The recovery path calls
-    _open_new_file() which calls mkdir(); if the parent is unwritable the
-    mkdir() raises PermissionError (not FileNotFoundError), so we need to
-    test the case where _open_new_file() itself triggers a failure on the
-    second open.
+    #6077 提案 6 update: `EventStore` now holds a session-lifetime append
+    handle (`_ensure_active_handle`) instead of open()/close()-ing per
+    write, so this scenario now exercises a SINGLE failing open attempt,
+    not the old two-attempt "recovery also fails" shape (`_write_owned` ->
+    `_ensure_active_handle`: the held handle's inode no longer matches
+    `active_path` after the unlink below, so it closes it and tries ONE
+    fresh `path.open("a")` against the now-unwritable directory — that
+    single attempt raises PermissionError directly). The assertion
+    (exception propagates) and the exception tuple accepted are unchanged;
+    only the internal mechanism producing it is.
 
     Approach:
-    - Write event 1 (normal).
+    - Write event 1 (normal) — opens the session-lifetime handle.
     - Delete the active file directly (not rmtree) so the directory still
-      exists but the file is gone. This triggers FileNotFoundError on write.
-    - Make the month subdirectory unwritable so _open_new_file().touch()
-      also fails — simulating a second consecutive failure.
-    - Assert that the exception propagates (second failure re-raises).
+      exists but the file is gone (its inode is unlinked from under the
+      held-open handle).
+    - Make the month subdirectory unwritable so the handle's own recovery
+      open (`_ensure_active_handle`'s `path.open("a")`, triggered by the
+      inode-mismatch it detects) fails.
+    - Assert that the exception propagates.
 
     Cleanup: restore directory permissions so tmp_path cleanup works.
     """
@@ -103,7 +109,7 @@ def test_stale_path_recovery_bounded_retry(tmp_path: pytest.TempPathFactory) -> 
     active = store.active_path
     assert active is not None and active.exists()
 
-    # Capture the month dir created by _open_new_file.
+    # Capture the month dir created by _begin_new_active_file/_ensure_active_handle.
     month_dir = active.parent
 
     # Step 2: delete only the active file (not the directory).
