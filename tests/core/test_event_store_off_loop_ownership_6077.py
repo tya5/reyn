@@ -23,9 +23,24 @@ replaced out from under it — the SAME inode hazard #6247's own review
 flagged for THIS store's held-open handle). ``fsync`` stays exactly once
 per event; durability is UNCHANGED by either proposal.
 
-This file's 3 tests are the witnesses the architect's brief required, each
-observed via a REAL, external fact — never a private call-count or
-attribute read:
+Follow-up ruling (same #6077, same PR): the FIRST cut of the external-
+replacement check ran once per WRITE — rejected (a per-write cost for a
+per-BURST problem), and built on a premise architect corrected: POSIX does
+NOT raise when writing through a handle whose file was unlinked (the
+inode stays alive until the fd closes), so nothing about "catch the
+exception" was ever going to work for a held-open handle in the first
+place. The ruling instead checks once per DRAIN BURST, using a boundary
+this codebase already has: ``DurabilityWorker._drain`` is self-terminating
+(runs until its queue is EMPTY, then exits — one ``_drain()`` call IS one
+burst). ``DurabilityWorker`` gained an OPTIONAL ``on_drain_start`` hook
+(default ``None`` — WAL/snapshot workers, same class, pay nothing);
+``EventStore`` is the only substrate that wires one. Cost now scales
+inversely with load: one check per N writes during a burst (when a
+per-write cost would matter), one check per write only when idle (when it
+doesn't).
+
+This file's 5 tests are the witnesses required, each observed via a REAL,
+external fact — never a private call-count or attribute read:
 
 1. Nothing lands on the real filesystem before the worker actually runs
    (``Path.exists()`` on the events dir, checked with no ``await`` between
@@ -34,10 +49,28 @@ attribute read:
    ``open()`` syscall crosses) fires once for many writes, not once per
    write — the same interposition technique this suite's sibling file
    (``test_event_store_off_loop_write.py``) already uses for ``Path.stat``.
-3. Recovery after an external deletion lands on a NEW, real inode
-   (``Path.stat().st_ino``) — the #6247-class hazard: a stale held-open
-   handle would keep "succeeding" at the OS level while writing into an
-   orphaned, invisible inode.
+3. Deny/present pair for the drain-boundary staleness check itself
+   (architect's own instruction: neither alone is sufficient — a "reopen
+   every drain, unconditionally" implementation would pass deny vacuously
+   without present catching it):
+   - **deny**: after an EXTERNAL replacement, the next drain writes into a
+     genuinely NEW file at the same path — the #6247-class hazard (a stale
+     held-open handle succeeds SILENTLY at the OS level, writing into an
+     orphaned, invisible inode) does not happen. Witnessed via
+     existence + content (``path.exists()`` and what it contains), NOT
+     ``st_ino`` equality — a CI-caught false-RED showed a freed inode
+     number can be immediately reused by the very next created file on
+     some filesystems (unlike #6247's own RENAME-based replacement, where
+     the old inode stays alive so inequality was reliable; this scenario
+     is DELETE-then-RECREATE, a different case the same instrument doesn't
+     transfer to cleanly — see the test's own docstring for the full
+     reasoning).
+   - **present**: with NO replacement (nothing freed, so no reuse
+     ambiguity), the SAME inode (``Path.stat().st_ino``, the instrument
+     architect named, still valid here) persists across a drain boundary —
+     the check doesn't needlessly treat "verify" as "rotate to a new
+     file."
+4. Enqueue order == write order, unaffected by any of the above.
 
 Real ``EventStore``/``DurabilityWorker`` instances, real filesystem
 (``tmp_path``), no mocks of collaborators — the ``Path.open``/``Path.stat``
@@ -175,28 +208,53 @@ async def test_append_mode_open_fires_once_for_many_writes(tmp_path, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# Witness 3 — recovery lands on a NEW inode, never a stale one (#6247-class)
+# Witness 3 — deny/present pair for the per-DRAIN-BURST staleness check
+# (#6077 提案 6 follow-up, architect ruling)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_recovery_after_external_deletion_writes_through_a_new_inode(tmp_path):
-    """Tier 2: holding a handle open across writes (#6077 提案 6) creates
-    the SAME inode hazard #6247's own review flagged: on POSIX, a write
-    through a handle whose file was deleted out from under it SUCCEEDS
-    SILENTLY at the OS level while writing into an orphaned inode no
-    reader of the path can ever see again. The next write after an
-    external deletion must land on a NEW, real inode at the same path --
-    not vanish into the old one.
+async def test_deny_external_replacement_writes_through_a_new_inode_next_drain(tmp_path):
+    """Tier 2: deny side of the required deny/present pair (see present
+    sibling below) — holding a handle open across writes (#6077 提案 6) creates the SAME
+    inode hazard #6247's own review flagged: on POSIX, a write through a
+    handle whose file was deleted out from under it SUCCEEDS SILENTLY at
+    the OS level while writing into an orphaned inode no reader of the
+    path can ever see again — and (architect's own correction) POSIX never
+    raises for this, so nothing about "catch the exception" could ever
+    have caught it. The NEXT DRAIN BURST after an external deletion must
+    verify (``EventStore._verify_active_handle_at_drain_start``, the
+    worker's ``on_drain_start`` hook) and write into a GENUINELY NEW file
+    at the same path — never the orphaned, unlinked one.
 
-    Witness: ``Path.stat().st_ino`` before/after (the exact technique
-    #6247's own review named, and the one architect's brief for THIS
-    change cited directly) -- never a private flag.
+    The 2 writes below are deliberately in SEPARATE drain bursts
+    (``flush()`` between them lets the drainer fully self-terminate) so
+    the second write's OWN drain is a fresh ``_drain()`` call — the
+    boundary the check runs at.
 
-    Strip-falsify (in-file Edit only): changing ``_ensure_active_handle``
-    to skip the inode-identity check entirely (``_handle_matches_path``
-    call removed, always reusing ``self._active_fh`` when it is open and
-    not closed) turned this RED with::
+    Witness — deviates from the ``st_ino``-equality instrument architect's
+    brief named (CI catch, reported to lead-coder, this docstring records
+    the resolution): #6247 replaced a file via RENAME, where the OLD inode
+    stays alive alongside the new one, so inode INEQUALITY reliably meant
+    "two different, coexisting files." This scenario is DELETE-then-
+    RECREATE instead — the old inode is freed, and a freed inode number can
+    be immediately reused by the very next file the filesystem creates (an
+    empty ``tmp_path`` on Linux/ext4/tmpfs makes this the LIKELY case, not
+    a rare one — observed directly in CI: ``st_ino`` identical before/after
+    while ``path.exists()`` and content were still both correct). So
+    ``st_ino`` equality does NOT mean "same file" here — it means nothing
+    either way. Nothing about that changes what an ACTUALLY BROKEN
+    implementation looks like, though: a stale-handle write reaches no
+    reader of ``path`` at all (verified locally: ``path.exists()`` is
+    ``False`` and ``path.read_text()`` raises ``FileNotFoundError`` when the
+    staleness check is disabled — see strip-falsify below), so the witness
+    here is ``path.exists()`` + its CONTENT containing "after" — a fact
+    with no inode-numbering ambiguity in either direction.
+
+    Strip-falsify (in-file Edit only): changing ``EventStore.__init__`` to
+    construct ``self._worker = DurabilityWorker()`` (dropping the
+    ``on_drain_start=self._verify_active_handle_at_drain_start`` kwarg —
+    i.e. disabling the staleness check entirely) turned this RED with::
 
         AssertionError: recovery must recreate the file at the same path --
         it does not exist. If this failed, the held-open handle kept
@@ -204,20 +262,21 @@ async def test_recovery_after_external_deletion_writes_through_a_new_inode(tmp_p
         reader of the path) instead of detecting the deletion and
         reopening.
 
-    Edited back (restoring the ``_handle_matches_path`` check), confirmed
-    GREEN again.
+    (with the check disabled, ``_ensure_active_handle`` never sees
+    ``self._active_fh`` cleared, so it never reopens at all -- the
+    unlinked path simply never comes back.) Edited back (restoring the
+    ``on_drain_start=...`` kwarg), confirmed GREEN again.
     """
     events_dir = tmp_path / "events"
     store = EventStore(events_dir)
     store.write(_ev("before"))
-    await store.flush()
+    await store.flush()  # drain 1 completes -- the drainer self-terminates
     path = store.active_path
     assert path is not None and path.exists()
-    before_ino = path.stat().st_ino
 
     path.unlink()  # external deletion -- store's held-open handle is now stale
 
-    store.write(_ev("after"))
+    store.write(_ev("after"))  # this write's own submit_nowait starts drain 2
     await store.aclose()
 
     assert path.exists(), (
@@ -226,12 +285,68 @@ async def test_recovery_after_external_deletion_writes_through_a_new_inode(tmp_p
         "file's orphaned inode (invisible to any reader of the path) instead "
         "of detecting the deletion and reopening."
     )
-    after_ino = path.stat().st_ino
-    assert after_ino != before_ino, (
-        "recovery must write through a NEW inode, not the old unlinked one "
-        f"-- inode unchanged at {before_ino}."
+    contents = path.read_text(encoding="utf-8")
+    assert "after" in contents, (
+        "the recreated file must contain the post-deletion event -- it doesn't. "
+        f"If this failed, the write landed somewhere other than the visible "
+        f"path. got: {contents!r}"
     )
-    assert "after" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_present_no_replacement_keeps_the_same_inode_across_drains(tmp_path):
+    """Tier 2: present side of the required deny/present pair (see deny
+    sibling above). Architect's own instruction: neither test alone is sufficient — a
+    "reopen every drain, unconditionally" implementation (correctly
+    detects a real replacement, but ALSO treats every drain-start as one,
+    even with nothing to detect) would pass the deny test above vacuously.
+    This is the sibling that catches THAT specific wrong shape: with NO
+    external replacement, 2 writes in 2 SEPARATE drain bursts
+    (``flush()`` between them, same technique as the deny test) must land
+    in the SAME file — a genuinely unchanged inode, not merely "some file
+    that happens to have the same name."
+
+    Witness: ``Path.stat().st_ino`` before/after, the same instrument the
+    deny sibling uses (and #6247's own review used) — never a private
+    flag or call count.
+
+    Strip-falsify (in-file Edit only): changing
+    ``_verify_active_handle_at_drain_start`` to unconditionally treat
+    every drain-start as a replacement — calling
+    ``self._begin_new_active_file(datetime.now())`` (a full rotation to a
+    NEW timestamped path) instead of ``self._close_active_handle()`` when
+    a handle is open, regardless of whether ``_handle_matches_path``
+    actually found a mismatch — turned this RED with::
+
+        AssertionError: the SAME inode must persist across a drain
+        boundary when nothing external replaced the file -- was <N>,
+        became <M>. If this failed, the drain-start check started
+        treating every drain as a replacement instead of verifying first.
+
+    Edited back (restoring the ``_close_active_handle()`` call gated on
+    ``_handle_matches_path``), confirmed GREEN again.
+    """
+    events_dir = tmp_path / "events"
+    store = EventStore(events_dir)
+    store.write(_ev("first"))
+    await store.flush()  # drain 1 completes -- the drainer self-terminates
+    path = store.active_path
+    assert path is not None and path.exists()
+    first_ino = path.stat().st_ino
+
+    store.write(_ev("second"))  # this write's own submit_nowait starts drain 2
+    await store.aclose()
+
+    second_ino = store.active_path.stat().st_ino  # type: ignore[union-attr]
+    assert second_ino == first_ino, (
+        "the SAME inode must persist across a drain boundary when nothing "
+        f"external replaced the file -- was {first_ino}, became {second_ino}. "
+        "If this failed, the drain-start check started treating every drain "
+        "as a replacement instead of verifying first."
+    )
+    assert store.active_path == path, "must still be the SAME path too, not just the same inode"
+    contents = path.read_text(encoding="utf-8")
+    assert "first" in contents and "second" in contents
 
 
 # ---------------------------------------------------------------------------

@@ -31,11 +31,17 @@ see that method's own docstring. Two consequences for these tests:
   worker actually DRAINED, not the last one enqueued. Every test below that
   needs the current value now ``await``s ``flush()``/``aclose()`` first (the
   established pattern this file's own purge-adjacent tests already used).
-- holding a session-lifetime handle open (提案 6) needs its OWN per-write
-  ``stat()`` to detect the file being deleted/replaced out from under it —
-  a DIFFERENT check than the old size-based rotation ``.stat()`` this suite
-  originally guarded against zero of. See
-  ``test_rotation_never_calls_path_stat``'s own updated docstring.
+- holding a session-lifetime handle open (提案 6) needs its OWN ``stat()`` to
+  detect the file being deleted/replaced out from under it — a DIFFERENT
+  check than the old size-based rotation ``.stat()`` this suite originally
+  guarded against zero of. A follow-up ruling (same #6077) moved this check
+  from once-per-write to once-per-DRAIN-BURST (``DurabilityWorker``'s own
+  ``on_drain_start`` hook — see ``EventStore._verify_active_handle_at_drain_
+  start``'s own docstring); ``test_rotation_size_check_never_stats_for_st_
+  size`` (below) pins the bound that follow-up produces. The dedicated
+  deny/present pair for the staleness check itself lives in
+  ``test_event_store_off_loop_ownership_6077.py``, this suite's sibling
+  file.
 
 Real ``EventStore``/``DurabilityWorker`` instances, real filesystem
 (``tmp_path``), no mocks of collaborators.
@@ -119,14 +125,17 @@ async def test_rotation_size_check_never_stats_for_st_size(tmp_path, monkeypatch
     fired on EVERY write() call once max_bytes is nonzero (the actual
     default, 10MB), not a rare path.
 
-    #6077 提案 6 (architect ruling) adds a DIFFERENT, DELIBERATE per-write
-    `.stat()` of its own — `_ensure_active_handle`'s inode-identity check,
-    needed because a session-lifetime open handle has no other way to
-    learn its file was deleted/replaced out from under it (see that
-    method's own docstring). So this test now asserts a BOUNDED count (at
-    most 1 stat per write, for inode identity — never more, and never for
-    `st_size`), not literally zero: the first write never checks (no
-    handle exists yet to validate), so 10 writes bound to at most 9 calls.
+    #6077 提案 6 follow-up (architect ruling) adds a DIFFERENT, DELIBERATE
+    `.stat()` of its own — the handle-staleness check
+    (`_verify_active_handle_at_drain_start`), needed because a
+    session-lifetime open handle has no other way to learn its file was
+    deleted/replaced out from under it (see that method's own docstring).
+    It runs at most ONCE PER DRAIN BURST, not once per write — this test's
+    2 bursts (a solo first write that opens the handle, then 9 more queued
+    with no `await` between them, i.e. ONE burst) bound the count to at
+    most 1, not 9: the first burst's own check no-ops (no handle open yet
+    to check), and the second burst's single check is the only stat() this
+    whole 10-write sequence can produce.
 
     Records calls to the ACTIVE store path specifically (rather than raising
     from a global Path.stat monkeypatch, which corrupts pytest's own internal
@@ -142,14 +151,17 @@ async def test_rotation_size_check_never_stats_for_st_size(tmp_path, monkeypatch
         return orig_stat(self, *a, **kw)
 
     monkeypatch.setattr(Path, "stat", _tracking_stat)
-    for i in range(10):
-        store.write(_ev("no_stat", i=i))
+    store.write(_ev("no_stat", i=0))
+    await store.flush()  # closes out burst 1 (the handle-opening write) -- no stat expected
+    for i in range(1, 10):
+        store.write(_ev("no_stat", i=i))  # burst 2: 9 writes, no await between -> ONE drain
     await store.aclose()
-    assert not stat_calls[9:], (
-        "at most 1 inode-identity stat() per write after the first (which "
-        f"has no handle yet to validate) — got {len(stat_calls)} calls for "
-        "10 writes; a count above 9, or any use of st_size, would mean "
-        "rotation's own SIZE decision started stat()-ing again"
+    assert not stat_calls[1:], (
+        "at most 1 handle-staleness stat() for this whole sequence (one "
+        f"per DRAIN BURST, not per write) — got {len(stat_calls)} calls "
+        "for 2 bursts covering 10 writes; more than 1 would mean the "
+        "staleness check regressed to per-write, or rotation's own SIZE "
+        "decision started stat()-ing again"
     )
 
 

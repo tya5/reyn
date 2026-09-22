@@ -24,6 +24,22 @@ is what later steps build on — the cross-substrate write-ahead ordering (a dep
 substrate submitted before the WAL event that references it) and, in #2259 PR-2b, non-blocking
 writes (``submit`` returns before the task runs, with a barrier awaiting only where an external
 effect is gated). For PR-2a ``submit`` always awaits (no relaxed-durability window).
+
+#6077 提案 6 follow-up (architect ruling): ``EventStore`` holds a session-lifetime file handle
+across writes (collapses ``open``/``close`` from once-per-event to ~once-per-rotation) — which
+needs a way to detect the file being replaced/deleted out from under that held-open handle
+(POSIX: a ``write`` through a stale handle succeeds SILENTLY, landing in an orphaned inode no
+reader of the path will ever see again). Checking this on every write reintroduces a per-write
+cost; architect's ruling uses a boundary THIS class already has instead of adding one: ``_drain``
+is SELF-TERMINATING (drains until the queue is EMPTY, then exits — see its own docstring), so one
+``_drain()`` call is already "one burst" of queued work. ``on_drain_start`` (below) is an
+OPTIONAL hook — defaulted to ``None`` deliberately, since WAL/snapshot substrates use this SAME
+class and must pay nothing for a concern that is EventStore's alone — invoked once at the top of
+each ``_drain()`` call, before it processes any queued item. Cost now scales inversely with load:
+one check per N queued writes during a burst (the situation where a per-write cost would have
+mattered), one check per write only when idle (where the cost never mattered). The worker itself
+carries no opinion about WHAT the hook checks — same substrate-agnostic discipline as the
+``DurableWrite`` callable itself.
 """
 from __future__ import annotations
 
@@ -56,10 +72,16 @@ class DurabilityWorker:
     def __init__(
         self, *, max_write_attempts: int = _WRITE_MAX_ATTEMPTS,
         retry_base_s: float = _WRITE_RETRY_BASE_S, retry_max_s: float = _WRITE_RETRY_MAX_S,
+        on_drain_start: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         self._max_write_attempts = max_write_attempts
         self._retry_base_s = retry_base_s
         self._retry_max_s = retry_max_s
+        # #6077 提案 6 follow-up: OPTIONAL, defaulted None — see module
+        # docstring. Only EventStore passes one today; WAL/snapshot workers
+        # (the same class, constructed elsewhere) never touch this and pay
+        # nothing.
+        self._on_drain_start = on_drain_start
         self._queue: "asyncio.Queue | None" = None
         self._drainer: "asyncio.Task | None" = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
@@ -166,8 +188,15 @@ class DurabilityWorker:
         Swallowing it (catching ``BaseException``) made an earlier drainer immortal — a cancel
         landing mid-write was caught + the loop continued, and ``_cancel_all_tasks`` teardown hung
         forever. So a cancel resolves the in-flight future + re-raises; only a real ``Exception``
-        (a write failure) is surfaced (to the submitter, or as the health-signal)."""
+        (a write failure) is surfaced (to the submitter, or as the health-signal).
+
+        #6077 提案 6 follow-up: ``on_drain_start`` (if set) runs ONCE here, before the loop below
+        processes any queued item — this IS the "once per burst" checkpoint (see module
+        docstring): every ``_drain()`` call is exactly one such burst, since the drainer is
+        self-terminating and only re-``_kick``ed when a NEW item lands after it already exited."""
         assert self._queue is not None
+        if self._on_drain_start is not None:
+            await self._on_drain_start()
         while True:
             try:
                 do_durable_write, fut = self._queue.get_nowait()

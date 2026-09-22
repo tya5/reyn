@@ -112,11 +112,31 @@ handle open introduces the SAME inode hazard #6247's own review flagged for
 ITS held-open handle: a write through a handle whose file was deleted (the
 existing ``FileNotFoundError``-recovery scenario documented below) or
 replaced out from under it succeeds SILENTLY at the OS level while landing
-in an orphaned, invisible inode — so ``_ensure_active_handle`` verifies the
-handle's inode still matches ``active_path`` via a cheap ``stat`` (NOT an
-``open`` — that's the cost being removed) before every write, and
-reopens/recovers when it doesn't. See ``_ensure_active_handle``'s own
-docstring.
+in an orphaned, invisible inode.
+
+#6077 提案 6 follow-up (architect ruling, same PR): the FIRST cut of this
+check ran a ``stat`` before EVERY write — rejected, because that reintroduces
+a per-write cost for what is really a per-BURST problem, AND (separately)
+architect corrected a false premise it had been built on: POSIX does NOT
+raise on a write through a handle whose file was unlinked (the fd/inode
+stays alive until closed) — so the OLD ``_write_line_sync``'s own
+``FileNotFoundError``-triggered recovery, which only ever fired because
+THAT code called ``open()`` on every single write, is structurally DEAD
+once a handle is held open across writes; nothing replaced it until this
+follow-up. The ruling: verify once per DRAIN BURST instead, using a
+boundary this codebase already has — ``DurabilityWorker._drain`` is
+self-terminating (runs until its queue is EMPTY, then exits), so one
+``_drain()`` call already IS one burst. ``DurabilityWorker`` gained an
+OPTIONAL ``on_drain_start`` hook (default ``None`` — WAL/snapshot workers,
+same class, pay nothing); ``EventStore`` is the only substrate that wires
+one (``_verify_active_handle_at_drain_start``), and it is the ONLY place
+that checks ``self._active_fh``'s inode against ``active_path`` via a cheap
+``stat`` (NOT an ``open`` — that's the cost proposal 6 removes) — closing a
+stale handle so the NEXT queued write's own ``_ensure_active_handle``
+reopens/recovers it. Our OWN rotation needs no such detection at all: we
+already know the instant it happens (``_begin_new_active_file`` closes the
+old handle itself). See ``_verify_active_handle_at_drain_start``'s own
+docstring for the full reasoning and cost analysis.
 
 Durability discipline mirrors #1765's WAL fix, per review: the single
 off-loop unit (``EventStore._write_owned``, via its own file handle) does
@@ -199,14 +219,20 @@ class EventStore:
         # 95,030-event workdir's own count, per the same-issue's own
         # measurement). Owned + mutated ONLY from `_write_owned` (and
         # `open()`/`aclose()`, which never race it — see their own
-        # docstrings) — never opened/closed per write. See
-        # `_ensure_active_handle`'s docstring for why a per-write `.stat()`
-        # (not `.open()`) is still required despite holding this handle.
+        # docstrings) — never opened/closed per write. Staleness (an
+        # external replace/delete) is verified once per DRAIN BURST, not
+        # per write — see `_verify_active_handle_at_drain_start`'s own
+        # docstring (the worker's `on_drain_start` hook, below) for why.
         self._active_fh: "TextIOWrapper | None" = None
         # Off-loop write worker (see module docstring). Lazily binds to
         # whichever loop is running on first write() — a store constructed
         # before any loop exists is fine; only submit_nowait touches the loop.
-        self._worker = DurabilityWorker()
+        # `on_drain_start` is THIS store's own per-drain-burst staleness
+        # check (#6077 提案 6 follow-up, architect ruling) — the default is
+        # `None` on `DurabilityWorker` itself precisely so WAL/snapshot
+        # workers (the same class, constructed elsewhere) never pay for a
+        # concern that is EventStore's alone; only this constructor wires it.
+        self._worker = DurabilityWorker(on_drain_start=self._verify_active_handle_at_drain_start)
 
     # ── public API ──────────────────────────────────────────────────────
 
@@ -236,12 +262,20 @@ class EventStore:
         ``submit_nowait`` requires a running loop and would otherwise raise,
         a regression this fix must not introduce for synchronous callers.
         There is no other coroutine sharing that thread to protect, so
-        deciding + creating + writing inline is exactly as safe as always.
+        deciding + creating + writing inline is exactly as safe as always
+        — including the handle-staleness check
+        ``_verify_active_handle_at_drain_start`` does once per drain burst
+        for the async path: there is no drain cycle here, so this path
+        runs its own synchronous counterpart
+        (``_verify_active_handle_sync``) once per call instead — no loop to
+        protect from that cost either, matching this path's existing
+        all-inline discipline.
         """
         data = event.model_dump(mode="json")
         try:
             asyncio.get_running_loop()
         except RuntimeError:
+            self._verify_active_handle_sync()
             self._write_owned(data)
             return
         self._worker.submit_nowait(lambda d=data: self._do_write(d))
@@ -337,37 +371,35 @@ class EventStore:
         return self._unique(candidate)
 
     def _ensure_active_handle(self) -> None:
-        """(Re)open ``self._active_fh`` onto ``self._active`` — the SOLE
-        place this store opens a file for writing (#6077 提案 6: collapses
-        `open`/`close` from once-per-event to roughly once-per-rotation).
+        """(Re)open ``self._active_fh`` onto ``self._active`` when it isn't
+        already open — the SOLE place this store opens a file for writing
+        (#6077 提案 6: collapses `open`/`close` from once-per-event to
+        roughly once-per-rotation-or-external-replacement).
 
-        A held-open handle needs its own staleness check that a per-write
-        ``open()`` never did: on POSIX, ``write()`` through a handle whose
-        file was deleted/replaced out from under it (external deletion —
-        e.g. dogfood scripts wiping ``.reyn/events/`` while the server is
-        live — or a rotation elsewhere naming the SAME path) succeeds
-        SILENTLY at the OS level while becoming invisible to every future
-        reader of ``self._active`` — the exact inode hazard #6247 hit for
-        ``history.jsonl``'s own held-open handle. So every write verifies
-        the handle's inode still matches what ``self._active`` currently
-        names via ``stat`` (cheap, and NOT the cost proposal 6 removes —
-        that cost is ``open``, which real-time AV hooks; a bare ``stat``
-        isn't an open) — never trusts "no exception yet" as proof the
-        handle is still good, the way the old per-write ``open()`` could.
-
-        ``FileNotFoundError`` recovery (parent dir or file missing —
-        rotation into a fresh month-dir, or the same external-deletion
-        case above) recreates the path and reopens, mirroring the OLD
-        ``_write_line_sync``'s own recovery (now folded in here, the one
-        place file creation happens, instead of split across the loop's
-        ``_open_new_file`` and the worker's ``_write_line_sync`` — the
-        duplication architect's ownership ruling removes)."""
+        Does NOT check staleness itself — a per-write staleness check was
+        architect's FIRST cut and was rejected: it reintroduces a per-write
+        cost for a per-DRAIN-BURST problem (see
+        ``_verify_active_handle_at_drain_start``'s own docstring for the
+        actual check and why it lives there instead). This method only
+        answers "is a handle currently open" — `None`/closed means open
+        one, ``FileNotFoundError`` recovery included (parent dir or file
+        missing — a fresh month-dir on rotation, or the SAME external-
+        deletion case the drain-start check just detected and closed the
+        stale handle for) — mirroring the OLD ``_write_line_sync``'s own
+        recovery, now folded into the ONE place file creation happens
+        (instead of split across the loop's old ``_open_new_file`` and the
+        worker's old ``_write_line_sync`` — the duplication architect's
+        ownership ruling removes). That old recovery used to trigger on
+        ITS OWN ``open()``-per-write raising ``FileNotFoundError`` directly;
+        with a held-open handle, ``open()`` no longer happens per write, so
+        the SAME recovery code now triggers whenever the drain-start check
+        (the verification side, per architect's ruling) closes a stale
+        handle — moved to fire off of verification, not a doomed per-write
+        exception path that handle-holding silently stopped reaching."""
         path = self._active
         assert path is not None
         if self._active_fh is not None and not self._active_fh.closed:
-            if self._handle_matches_path(self._active_fh, path):
-                return
-            self._close_active_handle()
+            return
         try:
             self._active_fh = path.open("a", encoding="utf-8")
         except FileNotFoundError:
@@ -375,12 +407,60 @@ class EventStore:
             path.touch(exist_ok=True)
             self._active_fh = path.open("a", encoding="utf-8")
 
+    async def _verify_active_handle_at_drain_start(self) -> None:
+        """The worker's ``on_drain_start`` hook (#6077 提案 6 follow-up,
+        architect ruling) — runs ONCE per drain burst, not once per write.
+
+        Only checks for an EXTERNAL replacement/deletion of
+        ``self._active`` (e.g. dogfood scripts wiping ``.reyn/events/``
+        while the server is live) — the ONE case this store has no other
+        way to learn about. Our OWN rotation is NOT checked here: it needs
+        no detection at all, because we already know the instant it
+        happens (``_begin_new_active_file`` closes the old handle itself,
+        synchronously, as part of deciding to rotate) — checking for
+        something we did ourselves would be pure waste.
+
+        Verifies via ``stat`` (never ``open`` — that's the cost proposal 6
+        removes) inside ``asyncio.to_thread``, keeping this off the loop
+        like every other blocking call this store makes. A mismatch closes
+        the handle; the NEXT queued write's own ``_ensure_active_handle``
+        reopens it (recovery included, since ``self._active_fh`` is now
+        `None`) — this hook only ever detects and closes, never reopens
+        itself, so there is still exactly ONE place that opens a file for
+        writing.
+
+        No-op when nothing is open yet (``_active_fh is None`` — the very
+        first write's own ``_ensure_active_handle`` will open it; nothing
+        to verify before that)."""
+        fh = self._active_fh
+        path = self._active
+        if fh is None or path is None:
+            return
+        if not await asyncio.to_thread(self._handle_matches_path, fh, path):
+            self._close_active_handle()
+
+    def _verify_active_handle_sync(self) -> None:
+        """The no-running-loop counterpart to
+        ``_verify_active_handle_at_drain_start`` — same check, same
+        no-op-if-nothing-open guard, run directly (no ``to_thread``: there
+        is no event loop to protect here, matching this whole sync-fallback
+        path's existing all-inline discipline) once per ``write()`` call
+        instead of once per drain burst, because there IS no drain cycle on
+        this path — see ``write()``'s own docstring for why per-call is
+        fine here (no loop, no bursts, no shared-cost concern)."""
+        fh = self._active_fh
+        path = self._active
+        if fh is None or path is None:
+            return
+        if not self._handle_matches_path(fh, path):
+            self._close_active_handle()
+
     @staticmethod
     def _handle_matches_path(fh: "TextIOWrapper", path: Path) -> bool:
         """True when ``fh``'s underlying inode is still the one ``path``
-        currently names. See ``_ensure_active_handle``'s docstring for why
-        this check exists at all (a held-open handle has no other way to
-        learn its file was deleted/replaced)."""
+        currently names. See ``_verify_active_handle_at_drain_start``'s
+        docstring for why/when this runs (once per drain burst — never
+        per-write)."""
         try:
             fh_ino = os.fstat(fh.fileno()).st_ino
             path_ino = path.stat().st_ino
@@ -475,9 +555,10 @@ class EventStore:
         of `st_size` — `max_bytes` defaults to a nonzero 10MB (ON by
         default; see the module docstring's #6077 note), so a `.stat()`-per-
         call here would fire on literally EVERY write, not a rare path.
-        (`_ensure_active_handle`'s own per-write `.stat()`, added by #6077
-        提案 6, is a DIFFERENT check — inode identity, not size — so it does
-        not reintroduce this.) The counter drifts (harmlessly) if an
+        (`_verify_active_handle_at_drain_start`'s own `.stat()`, added by
+        #6077 提案 6 and run at most once per DRAIN BURST — never per write
+        — is a DIFFERENT check: inode identity, not size. It does not
+        reintroduce this.) The counter drifts (harmlessly) if an
         external process appends to the same file, after a
         FileNotFoundError recovery re-creates it, or on Windows where
         text-mode `\n` -> `\r\n` translation makes bytes-on-disk exceed the
