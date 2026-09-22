@@ -366,6 +366,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: python scripts/check_no_core_dep_importorskip.py
 
+      # #6234 gate -- same shape as tui-widget-boundary below (an AST scan
+      # of a single src/ file, pinned zero-FP, no baseline); this step's
+      # own placement is alphabetical among this job's other steps, not
+      # adjacent to tui-widget-boundary (check_ci_role_declared.py only
+      # checks that the filename appears somewhere in a workflow file, not
+      # step order).
+      - name: pump-swallow-site-uniqueness
+        if: ${{ !cancelled() }}
+        run: python scripts/check_pump_swallow_site_uniqueness.py
+
       - name: silent-except-ratchet
         if: ${{ !cancelled() }}
         run: python scripts/silent_except_ratchet.py
