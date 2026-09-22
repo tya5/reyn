@@ -2194,7 +2194,20 @@ class AgentRegistry:
         never a second, independently-derived floor (structuralization ②).
 
         Best-effort per session, matching this method's own sibling prune
-        steps: one session's failure never blocks another's."""
+        steps: one session's failure never blocks another's.
+
+        #6077 提案 1: ``_gc_one_session_history``'s own
+        ``rewrite_history_dropping`` call always replaces
+        ``history.jsonl``'s inode (``tmp.replace(path)`` is unconditional
+        once the file exists) — so if THIS ``(name, sid)`` has a live,
+        in-process ``Session`` (this registry's own ``self._sessions``
+        map, e.g. the attached agent still running its turn loop), that
+        session's cached append handle is invalidated right here, back on
+        THIS coroutine's own thread, immediately after the
+        ``asyncio.to_thread`` worker returns — never from inside the
+        worker thread itself, which would let the worker close a handle
+        the event-loop thread could be mid-``write()`` on. No-op (no live
+        session, or one that was never asked to append)."""
         oldest_seq = self._oldest_kept_seq()
         if oldest_seq is None:
             return  # nothing has ever been truncated from the WAL yet
@@ -2204,6 +2217,12 @@ class AgentRegistry:
                     await asyncio.to_thread(
                         self._gc_one_session_history, name, sid, oldest_seq,
                     )
+                    session = self.get_session(name, sid)
+                    invalidate = getattr(
+                        session, "_invalidate_history_append_handle", None,
+                    )
+                    if invalidate is not None:
+                        invalidate()
                 except Exception as e:  # noqa: BLE001 — defensive, matches sibling prune steps
                     logger.warning(
                         "history.jsonl GC failed for %r/%r: %s", name, sid, e,
