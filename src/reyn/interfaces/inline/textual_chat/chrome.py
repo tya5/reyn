@@ -2149,6 +2149,8 @@ def status_line_text(
     diagnostics_count: int = 0,
     diagnostics_log_path: "str | None" = None,
     pump_swallow_count: int = 0,
+    wire_fifo_waiting: int = 0,
+    wire_fifo_inflight_elapsed: "float | None" = None,
 ) -> str:
     """The Telemetry segment (#4542: ``model · agent    $cost  ctx%``, no
     ``│``/``|`` separators — position and text-style carry the grouping
@@ -2225,6 +2227,39 @@ def status_line_text(
     numbers for "did anything get swallowed"). Ordered ahead of
     ``diagnostics_count`` (leftmost = most recently added) — no
     dependency between the two, an arbitrary but stable order.
+
+    #6077 proposal 5 (architect ruling on #6077, real-machine incident —
+    owner's own Windows box: "Enter 後、入力欄から消えるまで数秒かかる
+    ことがある", non-deterministic): ``wire_fifo_waiting`` (default 0) and
+    ``wire_fifo_inflight_elapsed`` (default ``None``) PREPEND a further
+    ``wire: N waiting, sending T.Ts`` segment, the SAME "prepend, don't
+    replace" shape ``pump_swallow_count``/``diagnostics_count`` above
+    already use — placed ahead of BOTH (leftmost = most recently added,
+    same stable-but-arbitrary ordering rule). This proposal does not fix
+    the delay; the single-in-flight wire FIFO
+    (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _drain_wire_fifo`) is a deliberately-serial design (its own docstring)
+    that a slow server round-trip can legitimately stall — this segment
+    only lets an operator tell "reyn is stuck" apart from "reyn is
+    waiting on the wire", by showing two RAW facts, never a threshold or a
+    judgement:
+
+    - ``wire_fifo_waiting``: the existing ``asyncio.Queue.qsize()`` —
+      no new counter (architect: a second counter for a fact
+      ``asyncio.Queue`` already tracks is a second source of truth).
+    - ``wire_fifo_inflight_elapsed``: seconds since the CURRENTLY-running
+      unit was taken off the queue, ``None`` when nothing is in flight —
+      needed because ``qsize()`` alone reads 0 while one unit is stuck
+      mid-flight (the reported shape), which would otherwise look
+      identical to "idle".
+
+    The segment renders the instant ``wire_fifo_inflight_elapsed`` is not
+    ``None`` — deliberately NO THRESHOLD (architect ruling: an ``N``-second
+    cutoff would be #6237's same trap, a number nobody claims the meaning
+    of). Both facts are shown together, every time a unit is in flight,
+    for as long as it is in flight; the operator reads "waiting" and
+    "sending" and judges slow vs. stuck themselves — this function
+    contributes no judgement of its own, only the two numbers.
     """
     if attach_state == "connecting":
         text = f"connecting… · agent {agent_name}"
@@ -2262,6 +2297,8 @@ def status_line_text(
         text = f"diagnostics: {diagnostics_count} — {diagnostics_log_path or '.reyn/logs/reyn.log'} · {text}"
     if pump_swallow_count:
         text = f"frame pump: {pump_swallow_count} swallowed — see log · {text}"
+    if wire_fifo_inflight_elapsed is not None:
+        text = f"wire: {wire_fifo_waiting} waiting, sending {wire_fifo_inflight_elapsed:.1f}s · {text}"
     return text
 
 
