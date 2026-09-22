@@ -179,7 +179,9 @@ CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
 # S``, #5894 ①-1) does not apply — it reads ``None`` (unbounded) instead,
 # matching the SSE stream's own policy. Traced structurally into each
 # branch's own awaited callee, not assumed — see ``BOUNDED_PAYLOAD_TYPES``
-# below for the ones traced and found bounded instead:
+# below for the ones traced and found bounded instead. "Each branch's own"
+# is a HUMAN trace, not a machine-verified one — see the SCOPE paragraph
+# below for exactly what the machine check does and does not see:
 #
 # - ``attach_request``: ``registry.attach()`` -> ``get_or_load()`` (on a
 #   first attach to a not-yet-loaded agent) -> ``_construct_session()`` ->
@@ -202,6 +204,45 @@ CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
 # the timeout still applies to — an unknown handler that turns out to hang
 # is CUT, not awaited forever), but the test is what keeps that fallback
 # from ever being silent.
+#
+# ⚠️ SCOPE of the machine check, TWO axes (#6241, lead-coder BLOCKING —
+# "each branch's own awaited callee" above read, wrongly, as "the check
+# covers every await reachable by a branch"; it does not):
+#
+# 1. **Population is ``await`` expressions only.** The AST walk stops at
+#    the awaited callee's own name — it never opens that callee's BODY. A
+#    callee that is itself a plain ``def`` (not ``async def``), e.g.
+#    ``registry.py``'s ``Registry.get_or_load`` (registry.py:3940), can run
+#    arbitrarily expensive SYNC work with no ``await`` of its own to find —
+#    that is ``loop_tripwire``'s own territory (a blocked event loop), a
+#    DIFFERENT invariant from this one (a bounded vs. unbounded READ
+#    TIMEOUT). This module does not, and must not, grow into a loop-
+#    blocking detector: doing so would make it worse at BOTH jobs.
+#
+# 2. **PROLOGUE ``await``s are outside the per-``ptype`` population, but
+#    NOT outside their effect.** ``endpoint.agui_submit`` runs a PROLOGUE
+#    (auth, JSON-parse, ``registry.exists``, and — load-bearing here —
+#    ``session = await registry.ensure_running(agent_name)``, endpoint.py's
+#    own line, currently ~1518) BEFORE the ``if ptype == "...":`` dispatch
+#    chain even starts. RULE: **a prologue ``await`` is reached by EVERY
+#    ``ptype`` that survives past it, not just "its own" branch** — the
+#    literal words ``endpoint.py`` itself uses at its own ``ensure_running``
+#    call site ("shared by every non-heartbeat/non-answer ptype"). The two
+#    early-return branches (``heartbeat``, ``TOOL_CALL_RESULT``) run BEFORE
+#    that line and are exempt; every other classified ``ptype`` above
+#    (``user_message`` included) runs AFTER it, so ``ensure_running``'s own
+#    boundedness is a live, UNRESOLVED input to every one of their
+#    classifications above — tracked as #6241 ⑴, deliberately NOT folded
+#    into ``LONG_RUNNING_PAYLOAD_TYPES`` by this PR (adding ONE ``ptype``
+#    here would only patch today's one instance; the NEXT prologue
+#    ``await`` would reopen the identical gap with nothing to catch it).
+#    What DOES catch a NEW prologue ``await`` landing unreviewed:
+#    ``test_prologue_awaits_are_a_pinned_population`` in the same test
+#    module above — it AST-derives the FULL set of ``await``s that run
+#    BEFORE any ``ptype ==`` branch (not just the ones inside one) and
+#    pins today's known set; a new one added there without updating that
+#    pin fails CI instead of silently changing what every downstream
+#    ``ptype``'s classification is actually resting on.
 #
 # ⚠️ Cross-version limitation, deliberately NOT solved here: a ``--connect``
 # client and the server it talks to can run different reyn builds, and this
