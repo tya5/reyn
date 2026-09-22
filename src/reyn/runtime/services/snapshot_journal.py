@@ -16,6 +16,11 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.turn_origin import TurnOrigin
 
 
+# #6077 default WAL-append gate (see `_snapshot_interval`'s own comment in
+# `__init__` for the replay-bound justification).
+_DEFAULT_SNAPSHOT_INTERVAL = 20
+
+
 class SnapshotJournal:
     """Owns AgentSnapshot + StateLog WAL.
 
@@ -33,6 +38,12 @@ class SnapshotJournal:
         disabled (tests / non-chat invocations) — all WAL operations
         become no-ops but in-memory state is still maintained where
         relevant.
+    snapshot_interval:
+        #6077: capture+write the snapshot once every this-many WAL appends
+        (fire-and-forget path, see `save_nowait`). Defaults to
+        `_DEFAULT_SNAPSHOT_INTERVAL`. A caller/test that needs a tighter or
+        looser replay bound overrides it directly — this is the config knob
+        half of the "no unexplained magic constant" requirement.
     """
 
     def __init__(
@@ -43,6 +54,7 @@ class SnapshotJournal:
         state_log: StateLog | None,
         generation_store: SnapshotGenerationStore | None = None,
         session_id: str = "main",
+        snapshot_interval: int = _DEFAULT_SNAPSHOT_INTERVAL,
     ) -> None:
         self._agent_name = agent_name
         # FP-0043 Stage 5: the conversation session this journal records for. Tagged
@@ -63,6 +75,21 @@ class SnapshotJournal:
         # registry. None → no anchor capture.
         self._anchor_store = None
         self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name, session_id)
+        # #6077: WAL-count gate for `save_nowait` (see its own docstring). Counts
+        # WAL appends SINCE the last snapshot capture+write; reset to 0 whenever a
+        # capture actually runs (triggered here, or unconditionally in `close()`).
+        self._wal_appends_since_snapshot = 0
+        # #6077 default: capture+write once every 20 WAL appends. 20 is NOT a
+        # measured value (owner: no measurement environment available, "go fix
+        # theoretically-suspicious spots") — it is a replay-bound justification:
+        # a crash leaves at most 19 trailing WAL entries un-snapshotted, all of
+        # them small per-mutation deltas (inbox/chain/intervention dict updates,
+        # never a bulk state rewrite), so replaying them onto the prior snapshot
+        # (this module's criterion #2) is cheap regardless of process size — the
+        # quantity this gate trades away is bounded structurally, not by timing.
+        # Overridable per-instance (`snapshot_interval=`) for a caller/test that
+        # needs a different bound without touching this constant.
+        self._snapshot_interval = snapshot_interval
 
     async def _wal_append(self, kind: str, **fields):
         """FP-0043 Stage 5: the single WAL-append chokepoint for this journal.
@@ -482,61 +509,23 @@ class SnapshotJournal:
         Persists synchronously: restore is a one-shot recovery write (not the hot
         per-mutation path), so it keeps the original sync save rather than forcing an
         async restore path. The off-loop routing (#1765 1a-ii) is for the frequent
-        per-mutation ``save()`` that would otherwise freeze the loop.
+        per-mutation ``save_nowait()`` that would otherwise freeze the loop.
         """
         self._snapshot = snapshot
         self._snapshot.save(self._snapshot_path)
 
-    async def save(self) -> None:
-        """Persist the current snapshot to disk (atomic write via AgentSnapshot).
-
-        #1765 Step 1a-ii: the snapshot is SERIALISED synchronously here — capturing a
-        consistent view of the mutable state (inbox / chains / …) at this instant — and only
-        the durable write+fsync is routed OFF the event loop, through the SAME serial
-        DurabilityWorker as the WAL (``state_log.submit_durable``). Two guarantees follow:
-
-        * **Loop-free fsync** — the snapshot fsync no longer freezes the event loop.
-        * **WAL → snapshot ordering** — every mutation method awaits its WAL append (durable)
-          BEFORE awaiting this save, and the worker is serial FIFO, so the snapshot's
-          ``applied_seq`` becomes durable only AFTER the WAL seq it records
-          (``applied_seq`` ≤ durable WAL seq). A crash can never leave a durable snapshot
-          pointing at a non-durable WAL entry.
-
-        No WAL (``state_log is None``: tests / non-chat) → the original synchronous save, so
-        the no-persistence contract is byte-identical. No try/except — I/O errors propagate
-        (unchanged from the original)."""
-        if self._state_log is None:
-            self._snapshot.save(self._snapshot_path)
-            return
-        data = self._snapshot.serialize()  # sync: consistent state captured before any await
-        path = self._snapshot_path
-
-        async def _write() -> None:
-            await asyncio.to_thread(AgentSnapshot.write_durable, path, data)
-
-        await self._state_log.submit_durable(_write)
-
-    def save_nowait(self) -> None:
-        """#2259 PR-2b: persist the snapshot NON-BLOCKING — the fire-and-forget counterpart of
-        `save()`, paired with `_wal_append_nowait`.
-
-        (1) DEEP-COPY the payload SYNCHRONOUSLY (serialize-sync-at-submit, criterion #3 — a
+    def _build_snapshot_write_job(self):
+        """#6077: capture the payload SYNCHRONOUSLY (serialize-sync-at-submit, criterion #3 — a
         consistent view of the mutable state at this instant, immune to a later in-place mutation
-        e.g. `chain["waiting_on"]=…`); (2) in the durable JOB, stamp `applied_seq` from
-        `state_log.last_assigned_seq` — the seq the PAIRED `_wal_append_nowait`'s WAL job assigned
-        IN THE WORKER. The pair was enqueued atomically (the journal mutation calls
-        `_wal_append_nowait` then `save_nowait` with NO await between), so the worker's FIFO runs
-        WAL_N then snap_N with no other WAL job between → snap_N reads WAL_N's seq, never a later
-        one (invariant #2), and the seq is worker-assigned (a durable WAL seq, never a non-durable
-        sync value — the hole the sync-seq had). (3) fire-and-forget through the SAME serial worker
-        AFTER the WAL append (FIFO lag → applied_seq ≤ durable-WAL-seq, criterion #1; a crash
-        mid-pair → recovery replays the WAL entry onto the prior snapshot = consistent prefix,
-        criterion #2). The hot path NEVER awaits durability (the blocking-invariant).
+        e.g. `chain["waiting_on"]=…`) and return the durable-worker job closure that stamps
+        `applied_seq` from `state_log.last_assigned_seq` and writes it. Shared by the gated
+        fire-and-forget path (`save_nowait`, submitted via `submit_durable_nowait`) and the
+        unconditional shutdown path (`close`, submitted via `submit_durable` — awaited).
 
-        No WAL (`state_log is None`: tests / non-chat) → the original synchronous save."""
-        if self._state_log is None:
-            self._snapshot.save(self._snapshot_path)
-            return
+        Pairs with a preceding `_wal_append_nowait` call with NO await between (when used from
+        `save_nowait`), so the worker's FIFO runs WAL_N then snap_N with no other WAL job between
+        → snap_N reads WAL_N's seq, never a later one (invariant #2), and the seq is
+        worker-assigned (a durable WAL seq, never a non-durable sync value)."""
         payload = copy.deepcopy(self._snapshot.to_payload())  # sync consistent capture
         path = self._snapshot_path
         log = self._state_log
@@ -555,4 +544,56 @@ class SnapshotJournal:
             # toward durable = conservative + correct. Atomic int assign on the loop (no race).
             snapshot.applied_seq = seq
 
-        log.submit_durable_nowait(_write)
+        return _write
+
+    def save_nowait(self) -> None:
+        """#2259 PR-2b / #6077: persist the snapshot NON-BLOCKING — the fire-and-forget
+        counterpart of the (now-deleted) synchronous ``save()``, paired with
+        `_wal_append_nowait`.
+
+        #6077: gated behind a WAL-APPEND-COUNT trigger (never a clock/timer — see the
+        module docstring's crash-recovery criteria) — this is called from EVERY WAL-recorded
+        mutation, so unconditionally capturing (`to_payload()` + `deepcopy`) and writing on
+        every single call was doing full-state work on every append. Skips BOTH the capture
+        and the write on the N-1 non-triggering calls (`_snapshot_interval`, see `__init__`);
+        captures + enqueues only on the Nth. A crash between triggers replays the WAL tail
+        onto the PRIOR snapshot — still a consistent prefix (this module's criterion #2),
+        which is exactly why skipping is safe. `close()` (below) is the unconditional
+        counterpart, called at shutdown so a clean exit never leaves a trailing gap.
+
+        Fire-and-forget through the durability worker, AFTER the paired WAL append (FIFO lag →
+        applied_seq ≤ durable-WAL-seq, criterion #1). The hot path NEVER awaits durability (the
+        blocking-invariant) — and now, on non-triggering calls, does no work at all.
+
+        No WAL (`state_log is None`: tests / non-chat) → the original synchronous save."""
+        if self._state_log is None:
+            self._snapshot.save(self._snapshot_path)
+            return
+        self._wal_appends_since_snapshot += 1
+        if self._wal_appends_since_snapshot < self._snapshot_interval:
+            return
+        self._wal_appends_since_snapshot = 0
+        self._state_log.submit_durable_nowait(self._build_snapshot_write_job())
+
+    async def close(self) -> None:
+        """#6077: unconditional final snapshot capture+write, independent of the N-append
+        gate in `save_nowait` above.
+
+        Without this, a clean shutdown could leave up to N-1 trailing WAL entries
+        un-snapshotted (harmless for crash-recovery per se — criterion #2 still holds — but
+        it means EVERY restart, not just a crash, pays a replay it didn't need to). Called at
+        the same lifecycle point the shared `StateLog` itself closes (see
+        `AgentRegistry.shutdown` for the ordering: journals close, THEN the shared worker
+        closes, so this job is still guaranteed to run).
+
+        AWAITS the durable write (unlike the fire-and-forget hot path) via `submit_durable` —
+        the caller needs the write to have actually landed before the worker goes away, not
+        merely enqueued. Resets the append counter so a re-used journal (tests) starts the
+        next gate window fresh.
+
+        No WAL (`state_log is None`: tests / non-chat) → the original synchronous save."""
+        if self._state_log is None:
+            self._snapshot.save(self._snapshot_path)
+            return
+        self._wal_appends_since_snapshot = 0
+        await self._state_log.submit_durable(self._build_snapshot_write_job())

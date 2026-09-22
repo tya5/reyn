@@ -12454,6 +12454,20 @@ class Session:
         """
         await self._event_store.aclose()
 
+    async def aclose_journal_snapshot(self) -> None:
+        """#6077 teardown: capture+write this session's snapshot UNCONDITIONALLY,
+        independent of the N-WAL-append gate ``SnapshotJournal.save_nowait`` now
+        applies. Without this, a clean shutdown could leave up to N-1 trailing WAL
+        entries un-snapshotted — harmless for crash recovery (still a consistent
+        prefix) but a needless replay cost on every ordinary restart, not just one
+        following an actual crash. Idempotent (``SnapshotJournal.close`` just
+        re-captures current state). Called from the registry's session-teardown
+        seam BEFORE the shared ``StateLog`` itself closes (see
+        ``AgentRegistry.shutdown``'s ordering) — the write is durable-worker-routed
+        and AWAITED, so it is guaranteed to land while the worker is still alive.
+        """
+        await self.journal.close()
+
     async def aclose_media_store(self) -> None:
         """#5364 §1.4 teardown: drain this session's MediaStore worker before
         the process exits — the same class of gap #2783 named for

@@ -49,22 +49,10 @@ async def test_journal_appends_into_the_exact_state_log_the_caller_passed(
     assert state_log.current_seq > before
 
 
-@pytest.mark.asyncio
-async def test_journal_saves_to_the_exact_snapshot_path_the_caller_passed(
-    tmp_path, monkeypatch,
-) -> None:
-    """Tier 1: ``journal.save()`` writes to the caller's OWN ``snapshot_path``.
-
-    Falsified by resolving the default path a second time inside the session:
-    the file would appear under the re-derived location, not this one.
-    """
-    monkeypatch.chdir(tmp_path)
-    snapshot_path = tmp_path / "explicit" / "snapshot.json"
-    session = make_session(
-        agent_name="recovery-wiring-snapshot-path", snapshot_path=snapshot_path,
-    )
-
-    await session.journal.append_inbox(kind="test", payload={"z": 3})
-    await session.journal.save()
-
-    assert snapshot_path.exists()
+# #6077: ``test_journal_saves_to_the_exact_snapshot_path_the_caller_passed`` was
+# deleted here along with ``SnapshotJournal.save()`` — the only caller of that
+# now-removed method (grep-confirmed, see PR body). The snapshot-path wiring
+# claim this test made ("writes to the caller's own snapshot_path, not a
+# re-derived default") is re-covered by the #6077 gate/shutdown tests in
+# ``tests/core/test_6077_snapshot_journal_gate.py``, which write via the surviving
+# ``close()``/``save_nowait()`` methods against an explicit ``snapshot_path``.

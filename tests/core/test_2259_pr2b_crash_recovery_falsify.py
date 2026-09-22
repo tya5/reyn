@@ -28,9 +28,12 @@ AGENT = "alpha"
 def _journal(tmp_path: Path):
     log = StateLog(tmp_path / "state.wal")
     store = SnapshotGenerationStore(AGENT, tmp_path / "generations")
+    # #6077: snapshot_interval=1 — this file exercises save_nowait's per-call
+    # WAL->snapshot ordering/stamping mechanism directly (not the N-WAL-append
+    # gate), so it needs "every mutation persists" restored.
     journal = SnapshotJournal(
         agent_name=AGENT, snapshot_path=tmp_path / "snapshot.json",
-        state_log=log, generation_store=store,
+        state_log=log, generation_store=store, snapshot_interval=1,
     )
     return log, store, journal
 
@@ -124,11 +127,11 @@ async def test_concurrent_journals_each_snapshot_keyed_to_own_wal_seq(tmp_path):
     store_b = SnapshotGenerationStore("a2", tmp_path / "gen_b")
     ja = SnapshotJournal(
         agent_name="a1", snapshot_path=tmp_path / "a1.json",
-        state_log=log, generation_store=store_a,
+        state_log=log, generation_store=store_a, snapshot_interval=1,
     )
     jb = SnapshotJournal(
         agent_name="a2", snapshot_path=tmp_path / "a2.json",
-        state_log=log, generation_store=store_b,
+        state_log=log, generation_store=store_b, snapshot_interval=1,
     )
 
     async def hammer(journal, tag):

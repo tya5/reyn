@@ -5579,6 +5579,20 @@ class AgentRegistry:
                     await aclose_event_store()
                 except Exception as exc:
                     logger.warning("EventStore teardown failed for %r: %s", _name, exc)
+        # #6077: unconditionally capture+write every loaded session's snapshot BEFORE
+        # the shared StateLog closes below — `save_nowait`'s N-WAL-append gate (see its
+        # own docstring) means a clean shutdown could otherwise leave up to N-1 trailing
+        # WAL entries un-snapshotted, paying an avoidable replay on the NEXT restart even
+        # though nothing crashed. Same getattr-guarded, same-loop pattern as the
+        # MCP/EventStore teardown loops above; must run while the worker the durable
+        # write is routed through is still alive, i.e. strictly before `_state_log.aclose()`.
+        for _name, session in self._iter_named_sessions():
+            aclose_journal_snapshot = getattr(session, "aclose_journal_snapshot", None)
+            if callable(aclose_journal_snapshot):
+                try:
+                    await aclose_journal_snapshot()
+                except Exception as exc:
+                    logger.warning("journal snapshot teardown failed for %r: %s", _name, exc)
         # #2783: drain the registry-wide StateLog (WAL) — the same gap #1765 left open
         # for the exact same reason (fire-and-forget submit_nowait, cancelled at loop
         # teardown). One shared instance, so this runs once per shutdown() call, not

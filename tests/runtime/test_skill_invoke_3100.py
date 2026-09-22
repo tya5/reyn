@@ -313,8 +313,13 @@ def _session_with_skills(tmp_path: Path, entries: list[SkillEntry], collisions: 
     # Session no longer builds its own recovery pair (generation_store ->
     # journal) — build it here from the same inputs the pre-refactor
     # Session.__init__ read internally (recovery-bundle-out-of-Session).
+    # #6077: snapshot_interval=1 mirrors tests/_support/session.py::make_session's
+    # own default — this is a verbatim duplicate of that helper's body (see the
+    # #6151 comment above) and several call sites in this file read the on-disk
+    # snapshot right after a single mutation.
     generation_store, journal = build_recovery(
         agent.agent_name, snapshot_path, state_log, "main",
+        snapshot_interval=1,
     )
     # #6151: this duplicate's own `agent_name="default"` + hardcoded
     # `"main"` session_id above is the SAME shared-temp-dir shape

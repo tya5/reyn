@@ -39,6 +39,8 @@ def build_recovery(
     snapshot_path: Path,
     state_log: "StateLog | None",
     session_id: str,
+    *,
+    snapshot_interval: "int | None" = None,
 ) -> tuple[SnapshotGenerationStore, SnapshotJournal]:
     """Build the WAL-event/recovery pair — ``generation_store`` (ADR-0038
     Stage 1a PITR generation store) -> ``journal`` (``SnapshotJournal``,
@@ -63,15 +65,28 @@ def build_recovery(
     persistence now flows through SnapshotJournal (extracted service).
 
     FP-0043 Stage 5: session_id is the conversation session id, threaded
-    to the journal so every WAL append carries it."""
+    to the journal so every WAL append carries it.
+
+    #6077: ``snapshot_interval`` (keyword-only) forwards to
+    ``SnapshotJournal``'s own N-WAL-append gate. ``None`` (every production
+    call site) means "use SnapshotJournal's own default" — a caller only
+    passes a value to deliberately loosen/tighten that gate (test
+    determinism; see ``tests/_support/agent_session.py`` /
+    ``tests/_support/session.py``, which default it to 1 for the many
+    existing tests that assert an on-disk snapshot right after a single
+    mutation)."""
     generation_store = SnapshotGenerationStore(
         agent_name, snapshot_path.parent / "generations",
     )
+    journal_kwargs: dict = {}
+    if snapshot_interval is not None:
+        journal_kwargs["snapshot_interval"] = snapshot_interval
     journal = SnapshotJournal(
         agent_name=agent_name,
         snapshot_path=snapshot_path,
         state_log=state_log,
         generation_store=generation_store,
         session_id=session_id,  # FP-0043 S5: per-session WAL routing
+        **journal_kwargs,
     )
     return generation_store, journal
