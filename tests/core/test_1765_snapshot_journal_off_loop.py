@@ -35,7 +35,14 @@ def _journal(tmp_path: Path) -> tuple[SnapshotJournal, StateLog, Path]:
     snap_path = tmp_path / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
     snap_path.parent.mkdir(parents=True, exist_ok=True)
     sl = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    j = SnapshotJournal(agent_name="alpha", snapshot_path=snap_path, state_log=sl)
+    # #6077: this file tests the OFF-LOOP WRITE MECHANISM itself (loop-freedom,
+    # WAL->snapshot ordering, persist+recover), not the N-WAL-append gate that
+    # save_nowait now applies at its default interval — snapshot_interval=1
+    # restores "every mutation triggers a snapshot write" so these three tests'
+    # premises (a single append -> an observable write) still hold.
+    j = SnapshotJournal(
+        agent_name="alpha", snapshot_path=snap_path, state_log=sl, snapshot_interval=1,
+    )
     return j, sl, snap_path
 
 

@@ -19,10 +19,15 @@ from reyn.runtime.services.snapshot_journal import SnapshotJournal
 def make_journal(tmp_path, *, with_state_log: bool = True) -> SnapshotJournal:
     snapshot_path = tmp_path / "snapshot.json"
     state_log = StateLog(tmp_path / "state.wal") if with_state_log else None
+    # #6077: this file unit-tests SnapshotJournal's per-mutation persistence
+    # contract (each op -> a durable snapshot), not the N-WAL-append gate
+    # save_nowait now applies at its default interval — snapshot_interval=1
+    # keeps that per-op contract observable here.
     return SnapshotJournal(
         agent_name="test_agent",
         snapshot_path=snapshot_path,
         state_log=state_log,
+        snapshot_interval=1,
     )
 
 

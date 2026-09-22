@@ -81,6 +81,7 @@ def make_session(
     snapshot_path: Path | None = None,
     resolver: ModelResolver | None = None,
     isolate_child_temp_dir: bool = True,
+    snapshot_interval: int = 1,
 ) -> Session:
     """Create a Session whose compaction engine uses a synthetic T_max.
 
@@ -152,8 +153,14 @@ def make_session(
     # Session no longer builds its own recovery pair (generation_store ->
     # journal) — build it here from the same inputs the pre-refactor
     # Session.__init__ read internally (recovery-bundle-out-of-Session).
+    # #6077: default snapshot_interval=1 (NOT SnapshotJournal's own production
+    # default) — this helper backs many tests that assert an on-disk snapshot
+    # right after a single mutation (the pre-#6077 "every mutation persists"
+    # contract). A caller wanting to exercise the N-WAL-append gate itself
+    # passes snapshot_interval=<N> explicitly.
     generation_store, journal = build_recovery(
         agent.agent_name, snapshot_path, state_log, "main",
+        snapshot_interval=snapshot_interval,
     )
     # Monkeypatch covers the engine's compute_budgets() call. #3671 follow-up:
     # CompactionEngine now builds LAZILY (CompactionController._engine, a

@@ -27,11 +27,15 @@ def _journal(tmp_path: Path, *, with_store: bool = True):
         SnapshotGenerationStore(AGENT, tmp_path / "generations")
         if with_store else None
     )
+    # #6077: snapshot_interval=1 — several assertions here read
+    # `journal.snapshot.applied_seq` right after a single mutation, which is
+    # only stamped when save_nowait's capture+write actually runs.
     journal = SnapshotJournal(
         agent_name=AGENT,
         snapshot_path=tmp_path / "snapshot.json",
         state_log=log,
         generation_store=store,
+        snapshot_interval=1,
     )
     return log, store, journal
 

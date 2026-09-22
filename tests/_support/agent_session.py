@@ -124,11 +124,19 @@ def make_session(
     snapshot_path = kwargs.get("snapshot_path") or default_snapshot_path(
         agent.agent_name, root=agent.workspace_state_dir,
     )
+    # #6077: default snapshot_interval=1 here (NOT SnapshotJournal's own
+    # production default) — this helper backs ~280 call sites across the
+    # suite, many of which assert an on-disk snapshot right after a single
+    # mutation (the pre-#6077 "every mutation persists" contract). Popped
+    # from kwargs (never a Session constructor field) so a test that wants
+    # to exercise the gate itself can pass snapshot_interval=<N> through.
+    snapshot_interval = kwargs.pop("snapshot_interval", 1)
     generation_store, journal = build_recovery(
         agent.agent_name,
         snapshot_path,
         kwargs.get("state_log"),
         kwargs.get("session_id", "main"),
+        snapshot_interval=snapshot_interval,
     )
     # #4349: Session's own default (``resolver or ModelResolver({})``) is
     # genuinely empty now — reyn ships no built-in model catalog to fall

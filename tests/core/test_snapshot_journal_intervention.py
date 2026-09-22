@@ -32,8 +32,12 @@ def _journal(tmp_path: Path, *, with_state_log: bool = True) -> tuple[SnapshotJo
     snapshot_path = tmp_path / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     sl = StateLog(tmp_path / ".reyn" / "wal.jsonl") if with_state_log else None
+    # #6077: snapshot_interval=1 — this file asserts the on-disk snapshot right
+    # after a single mutation (the pre-#6077 "every mutation persists"
+    # contract), not the N-WAL-append gate.
     j = SnapshotJournal(
         agent_name="alpha", snapshot_path=snapshot_path, state_log=sl,
+        snapshot_interval=1,
     )
     return j, sl
 
