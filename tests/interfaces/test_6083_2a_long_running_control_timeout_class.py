@@ -151,8 +151,14 @@ def _prologue_await_reprs() -> "set[str]":
     ``ptype`` — e.g. the auth / JSON-parse / ``registry.exists`` guards),
     walks its FULL subtree for ``ast.Await`` nodes. Each finding is the
     awaited expression's own unparsed source (``ast.unparse``) — a
-    human-readable repr, not a line number, so a REVIEWED rename does not
-    itself trip this population; an actually NEW await does.
+    human-readable repr, not a line number, so moving a line or
+    reformatting it does not itself trip this population. A RENAME
+    (receiver, argument, or call shape) DOES change the repr and DOES trip
+    it — that is intended, not a false positive to work around: the pin
+    going stale is the signal to go read whether a genuinely NEW await
+    landed or an EXISTING one was only rewritten, and either way the
+    person touching the pin re-confirms its boundedness rather than the
+    change sliding through unread.
 
     Population is ``await`` expressions only (protocol.py's own SCOPE
     comment, axis 1) — the awaited callee's own BODY is never opened. A
