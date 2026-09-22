@@ -24,6 +24,20 @@ longer an action-usage table to clear.
 Two-step confirmation pattern mirrors ``/reset`` because the history
 delete is irreversible (= the ``history/`` segment directory isn't
 tracked by git in any typical project layout).
+
+#6240/#6248 (architect ruling on PR #6257's own review, issuecomment-
+5773552909): the ACTUAL disk wipe + the handle-close/reopen ordering
+invariant it depends on now live on :meth:`Session.clear_history`, not
+here. This handler was ALREADY reaching across that boundary before
+segments existed (``history_path.unlink()`` / ``history.clear()``), just
+through PUBLIC attribute names that #3595 S4's residue gate had no way
+to see — #6248 did not introduce that crossing, only exposed it, once
+the operation grew a real ordering invariant (a held-open file handle) a
+slash module cannot safely honor from the outside. This handler keeps
+only the confirm-flow UX: the two-step confirmation prompt, the
+``Currently: N turns`` line, and the success/error reply text — see
+``Session.clear_history``'s own docstring for the 4-step order and why
+it is load-bearing.
 """
 from __future__ import annotations
 
@@ -66,55 +80,28 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
         return
 
     history = getattr(ctx.session, "history", None)
-    history_dir = getattr(ctx.session, "history_dir", None)
+    clear_op = getattr(ctx.session, "clear_history", None)
 
-    # Snapshot size before any mutation so the report is accurate even if
-    # disk deletion is attempted first.
-    n_turns_before = len(history) if isinstance(history, list) else 0
-
-    # Disk deletion first: if it fails the in-memory state is unchanged and
-    # the next session restart will see a consistent (uncorrupted) history.
-    # Clearing memory first then failing on disk leaves the opposite: the
-    # current session sees empty history but the history/ dir survives and
-    # reloads the old turns on next startup.
-    #
-    # #6240/#6248: removes the WHOLE ``history/`` segment directory — the
-    # active segment AND every sealed one — not just the active file.
-    # Before #6248 this command unlinked only ``history_path`` (then the
-    # single ``history.jsonl``); with the segment layout that would leave
-    # every SEALED segment behind, so a fresh active segment would look
-    # empty in THIS process while a NEXT restart's hydration walked
-    # `history/` and read the old sealed segments right back in — /clear
-    # would have looked like it worked and then silently reverted. This
-    # is the defect the #6248 design named as "この設計が新しく作る欠陥"
-    # and required closing in the SAME PR.
-    #
-    # A currently-open append handle is invalidated FIRST: on some
-    # platforms (Windows) an open file cannot be removed out from under
-    # its own handle, and even where it can, leaving the handle open
-    # would have the very next append silently recreate the active
-    # segment's old inode's content via a stale buffered write.
-    if history_dir is not None:
-        reset_disk_state = getattr(ctx.session, "_reset_history_disk_state", None)
-        if callable(reset_disk_state):
-            reset_disk_state()
-        try:
-            if history_dir.is_dir():
-                for entry in history_dir.iterdir():
-                    entry.unlink(missing_ok=True)
-                history_dir.rmdir()
-        except OSError as exc:
-            await reply_error(
-                ctx,
-                f"failed to remove history directory {history_dir}: {exc}",
-            )
-            return
-
-    if not isinstance(history, list):
+    if not callable(clear_op):
+        # A session-shaped stub with no real disk-backed history at all
+        # (test doubles, or a future session kind) — nothing to wipe.
         await reply(ctx, "✓ Nothing to clear (= no history).")
         return
 
-    history.clear()
+    try:
+        n_turns_before = clear_op()
+    except OSError as exc:
+        history_dir = getattr(ctx.session, "history_dir", None)
+        await reply_error(
+            ctx,
+            f"failed to remove history directory {history_dir}: {exc}",
+        )
+        return
+
+    if not n_turns_before and not isinstance(history, list):
+        await reply(ctx, "✓ Nothing to clear (= no history).")
+        return
+
     await reply(
         ctx,
         f"✓ Cleared: {n_turns_before} history turn(s). "

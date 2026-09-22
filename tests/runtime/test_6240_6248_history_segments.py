@@ -202,3 +202,140 @@ def test_appending_after_a_flat_file_exists_writes_to_the_segment_dir_not_the_fl
     assert session.history_path.parent.name == "history"
     on_disk = session.history_path.read_text().splitlines()
     assert json.loads(on_disk[0])["content"] == "brand new turn"
+
+
+# ── ③ Session.clear_history() -- the published op (#6248 issuecomment- ─────
+# ── 5773552909, architect ruling on PR #6257's own review) ─────────────────
+
+
+def test_clear_history_then_append_lands_in_a_visibly_fresh_segment(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: strip-falsifier target -- witness ①. After
+    ``Session.clear_history()``, the NEXT append is genuinely visible at
+    ``session.history_path`` (read back from a completely fresh handle,
+    never through the object's own cached one) -- proving step ① (close
+    the OLD handle before deleting) actually ran, not just step ③
+    (nominally reopening).
+
+    Strip-falsify (in-file Edit only): commenting out the
+    ``self._invalidate_history_append_handle()`` call at the top of
+    ``Session.clear_history`` turned this RED with::
+
+        FileNotFoundError: [Errno 2] No such file or directory:
+        '.../history/history.jsonl'
+
+    (the post-clear append silently wrote through the STALE handle into
+    the now-unlinked, invisible old inode -- #6247/#6251's own failure
+    class, self-inflicted -- so nothing was ever visible at the fresh
+    path) -- restored (Edit), confirmed GREEN again."""
+    session = make_session(agent_name="omega", workspace_base_dir=tmp_path)
+    for i in range(3):
+        session._append_history(ChatMessage(role="user", content=f"pre-clear {i}"))
+
+    session.clear_history()
+    session._append_history(ChatMessage(role="user", content="post-clear"))
+
+    on_disk = [
+        json.loads(ln)
+        for ln in session.history_path.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert [row["content"] for row in on_disk] == ["post-clear"], (
+        "the fresh active segment must contain ONLY the post-clear append"
+    )
+
+
+def test_appending_without_clearing_stays_in_the_same_segment(tmp_path: Path) -> None:
+    """Tier 2: witness ② -- the positive-control sibling of the test
+    above. WITHOUT calling ``clear_history()``, a later append lands in
+    the SAME (already-existing) active segment as earlier ones -- proving
+    witness ①'s green is not simply "every append always lands in a file
+    that happens to look fresh" (which would pass vacuously in a world
+    where sessions never accumulate).
+
+    Strip-falsify (in-file Edit only): forcing ``_maybe_seal_active_
+    history_segment``'s own size guard to never take its early-return
+    branch (``if size < SEGMENT_MAX_BYTES: return`` -> ``if False: ...``,
+    i.e. seal on EVERY append regardless of size) turned this RED with::
+
+        AssertionError: without a clear, both appends must accumulate in
+        the SAME segment
+        assert ['second'] == ['first', 'second']
+        At index 0 diff: 'second' != 'first'
+        Right contains one more item: 'second'
+
+    (the second append landed alone in a freshly-sealed segment, "first"
+    sealed away into a sibling file) -- restored (Edit), confirmed GREEN
+    again."""
+    session = make_session(agent_name="omega2", workspace_base_dir=tmp_path)
+    session._append_history(ChatMessage(role="user", content="first"))
+    session._append_history(ChatMessage(role="user", content="second"))
+
+    on_disk = [
+        json.loads(ln)
+        for ln in session.history_path.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert [row["content"] for row in on_disk] == ["first", "second"], (
+        "without a clear, both appends must accumulate in the SAME segment"
+    )
+
+
+def test_clear_history_disk_failure_leaves_in_memory_history_untouched(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: strip-falsifier target -- witness ③ (architect: "現行コメ
+    ントが主張していることを、今誰も検査していません"). When the disk
+    step (removing ``history_dir``) raises, ``session.history`` must be
+    UNCHANGED -- the 4-step order's whole point (steps ①-② before ④) is
+    that a disk failure never leaves memory and disk disagreeing about
+    what survived.
+
+    Strip-falsify (in-file Edit only): reordering ``Session.clear_history``
+    to call ``self.history.clear()`` BEFORE the ``history_dir`` removal
+    (matching the exact defect class this test's own module docstring on
+    ``clear_history.py`` names) turned this RED with::
+
+        AssertionError: in-memory history must be UNCHANGED when the disk
+        step raises -- got [], expected [ChatMessage(role='user',
+        content='turn 0', ts='', seq=1, ...), ChatMessage(role='user',
+        content='turn 1', ts='', seq=2, ...)]
+        assert [] == [ChatMessage(...)]
+        Right contains 2 more items, first extra item:
+        ChatMessage(role='user', content='turn 0', ...)
+
+    (the in-memory list was empty even though the disk step raised and
+    never completed) -- restored (Edit), confirmed GREEN again."""
+    session = make_session(agent_name="omega3", workspace_base_dir=tmp_path)
+    for i in range(2):
+        session._append_history(ChatMessage(role="user", content=f"turn {i}"))
+    before = list(session.history)
+
+    class _FailingIterdirPath:
+        """Wraps the real ``history_dir`` so ``is_dir()``/``iterdir()``
+        still answer truthfully (matching production's own control flow)
+        but ``iterdir()`` raises -- a write-protected directory, not a
+        missing one."""
+
+        def __init__(self, real: Path) -> None:
+            self._real = real
+
+        def is_dir(self) -> bool:
+            return self._real.is_dir()
+
+        def iterdir(self):
+            raise OSError("permission denied")
+
+    session.history_dir = _FailingIterdirPath(session.history_dir)
+
+    raised = False
+    try:
+        session.clear_history()
+    except OSError:
+        raised = True
+    assert raised, "sanity: the disk step must actually raise for this witness to mean anything"
+    assert session.history == before, (
+        "in-memory history must be UNCHANGED when the disk step raises -- "
+        f"got {session.history!r}, expected {before!r}"
+    )

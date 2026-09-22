@@ -4602,26 +4602,74 @@ class Session:
                 self.agent_name, exc_info=True,
             )
 
-    def _reset_history_disk_state(self) -> None:
-        """#6240/#6248: close the active-segment append handle AND reset
-        the active-segment tracking triple (``_active_segment_min_seq`` /
-        ``_active_segment_max_seq`` / ``_active_segment_has_summary``).
+    def clear_history(self) -> int:
+        """Wipe this session's chat history, in-memory AND on disk, and
+        resume appending into a FRESH active segment. Returns the number
+        of turns cleared (``len(self.history)`` as it stood before this
+        call).
 
-        The ONE caller is ``/clear-history`` (``clear_history.py``) — a
-        LIVE session's own ``history/`` directory being deleted out from
-        under it, while the session itself keeps running. Unlike
-        :meth:`_invalidate_history_append_handle` alone (``run()``'s own
-        teardown, where nothing appends again afterward so stale tracking
-        values are harmless), a session that survives a clear WILL append
-        again: without also resetting the tracking triple here, the NEXT
-        seal would encode this SESSION's pre-clear ``min_seq`` into the
-        sealed filename of a segment whose actual first line is a
-        POST-clear message — a wrong, stale fact baked into a filename
-        GC then trusts without ever reading the file to check it."""
+        #6240/#6248 (architect ruling on PR #6257's own review, issuecomment
+        -5773552909): the destructive-write-with-a-held-handle ordering
+        was previously commented on inline in ``clear_history.py`` (the
+        slash handler) — moved HERE because handler-side, it could only
+        ever touch ``history_path``/``history_dir`` (both public
+        attributes; the ordering invariant a slash module has no way to
+        enforce lives on the object that owns the handle). This is a
+        PUBLISHED session operation (not a private residue entry): #3595
+        S4's own gate rejects declaring it as residue instead, because
+        every EXISTING declared-residue member is a READ — this is a
+        destructive WRITE with a file-handle ordering invariant, a
+        different class entirely (the gate's own name, "the residue
+        SHRINKS", already rules out adding a new write to it). Routing it
+        through the transport/client layer instead is not a style
+        preference either: #6247/#6251 already closed, twice, the exact
+        defect class "something other than the appender renames/deletes
+        the active segment out from under a held-open handle" — a
+        transport has no access to that handle, so it cannot safely
+        delete ``history_dir`` at all while this session is live.
+
+        ⭐ **Order is the invariant — do not reorder these 4 steps**:
+
+        1. **Close the handle first.** ``run()``'s own teardown already
+           establishes this shape (:meth:`_invalidate_history_append_
+           handle`) — an open handle must never outlive the file it
+           points at being removed out from under it (the #6247/#6251
+           class again, now self-inflicted if skipped here).
+        2. **Delete the WHOLE `history/` directory** — every segment,
+           active AND sealed (#6248's own named defect: removing only
+           the active file leaves sealed segments behind, so the NEXT
+           restart's hydration reads old turns right back in and
+           ``/clear`` looks like it worked and silently reverts). If this
+           raises, steps 3-4 never run — ``self.history`` (step 4) is
+           UNTOUCHED, so a disk failure never leaves memory and disk
+           disagreeing about what survived (mirrors the pre-#6248 handler
+           logic byte-for-byte, just moved here with the handle-close
+           now folded in ahead of it).
+        3. **Open a fresh active segment** — the NEXT append must not
+           silently recreate the OLD (just-deleted) segment's own
+           tracking state (``_active_segment_min_seq`` etc. reset to
+           ``None`` here too, same reasoning the old ``_reset_history_
+           disk_state`` docstring gave: a stale ``min_seq`` baked into a
+           future sealed-segment filename is a wrong fact GC trusts
+           without ever reading the file to check it).
+        4. **Clear ``self.history`` last** — after disk has genuinely
+           succeeded, never before (see step 2).
+
+        The caller (``clear_history.py``'s slash handler) keeps only the
+        confirm-flow UX: the two-step confirmation prompt, the
+        ``Currently: N turns`` line, and the success/error reply text."""
+        n_turns_before = len(self.history)
         self._invalidate_history_append_handle()
         self._active_segment_min_seq = None
         self._active_segment_max_seq = None
         self._active_segment_has_summary = False
+        if self.history_dir.is_dir():
+            for entry in self.history_dir.iterdir():
+                entry.unlink(missing_ok=True)
+            self.history_dir.rmdir()
+        self._history_append_handle()  # opens the fresh active segment now, not lazily
+        self.history.clear()
+        return n_turns_before
 
     def _enforce_per_message_content_cap(self, msg: ChatMessage) -> None:
         """#6042 — the per-message durable-content byte cap, checked at

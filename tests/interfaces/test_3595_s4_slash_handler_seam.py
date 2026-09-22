@@ -685,7 +685,23 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: row (project_status's ``permission_mode``/``permission_mode_configured``/
 #: ``permission_mode_downgrade_reason`` keys) -- no slash handler reaches
 #: through any of them.
-_PUBLIC_MEMBER_CEILING = 130
+#: #6240/#6248 (architect ruling, PR #6257 issuecomment-5773552909) adds
+#: ONE more: ``clear_history() -> int``. NOT the "publish _x as x"
+#: anti-pattern this gate's own module docstring warns against (that
+#: would ratify an encapsulation break, not close it) -- there was no
+#: pre-existing private ``_clear_history`` this merely renamed; it is a
+#: NEW published operation replacing what ``clear_history.py`` used to
+#: do by reaching across 2 PUBLIC attributes (``history_path``/
+#: ``history``) the gate above had no way to see. Architect's own
+#: reasoning for why this is the correct shape (not a residue-gate
+#: entry, not a transport/client method): every OTHER declared residue
+#: member is a READ; this is a destructive WRITE with a file-handle
+#: ordering invariant (#6247/#6251's own failure class if a caller
+#: without the handle tried to delete the active segment out from under
+#: a live appender) -- a different class the residue gate's own name
+#: ("the residue SHRINKS") already excludes, and one only ``Session``
+#: itself (the handle's owner) can safely perform.
+_PUBLIC_MEMBER_CEILING = 131
 
 
 def test_session_public_surface_does_not_grow() -> None:
