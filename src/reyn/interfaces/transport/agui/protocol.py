@@ -205,9 +205,10 @@ CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
 # is CUT, not awaited forever), but the test is what keeps that fallback
 # from ever being silent.
 #
-# ⚠️ SCOPE of the machine check, TWO axes (#6241, lead-coder BLOCKING —
-# "each branch's own awaited callee" above read, wrongly, as "the check
-# covers every await reachable by a branch"; it does not):
+# ⚠️ SCOPE of the machine check, TWO axes (#6241): "each branch's own
+# awaited callee" above is NOT "every await reachable by a branch" — it
+# covers neither an awaited callee's own body (axis 1) nor an await that
+# runs BEFORE the dispatch chain starts (axis 2):
 #
 # 1. **Population is ``await`` expressions only.** The AST walk stops at
 #    the awaited callee's own name — it never opens that callee's BODY. A

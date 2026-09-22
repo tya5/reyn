@@ -29,7 +29,7 @@ duration could be written into a test at all. The real socket-level mechanics
 proven by ``test_5894_control_timeout_and_coalesce.py``'s own real-listener
 tests; this module does not re-prove that.
 
-★ #6241 (lead-coder BLOCKING, on top of PR #6105's own co-vet): the
+★ #6241 (on top of PR #6105's own co-vet): the
 derivation above walks ``ptype == "<literal>"`` comparisons — a population
 of ``ptype`` STRINGS — and says nothing about ``await``s that run BEFORE
 that dispatch chain even starts. ``endpoint.agui_submit`` has exactly one:
@@ -135,8 +135,8 @@ def _is_ptype_dispatch_if(node: "ast.If") -> bool:
 
 def _prologue_await_reprs() -> "set[str]":
     """AST-derive every ``await <expr>`` in ``agui_submit`` that runs
-    BEFORE any ``ptype ==`` branch is reached — its PROLOGUE, per #6241
-    (lead-coder BLOCKING): a ``ptype``-branch population
+    BEFORE any ``ptype ==`` branch is reached — its PROLOGUE, per #6241:
+    a ``ptype``-branch population
     (:func:`_ptypes_agui_submit_branches_on`) says nothing about an
     ``await`` that sits OUTSIDE every branch, yet such an ``await`` is
     reached by every ``ptype`` that survives past it — a fact
@@ -237,21 +237,21 @@ def test_no_classified_type_is_stale() -> None:
 
 
 def test_prologue_awaits_are_a_pinned_population() -> None:
-    """Tier 2: #6241 (lead-coder BLOCKING) — the population-derivation gap
-    itself. ``agui_submit`` runs ONE ``await`` before any ``ptype ==``
-    branch: ``registry.ensure_running(agent_name)`` (its own line, ~1518)
-    — reached by every classified ``ptype`` except ``heartbeat`` /
-    ``TOOL_CALL_RESULT`` (both return earlier). ``payload = await
-    request.json()`` runs even earlier, before ``ptype`` is even read, so
-    it reaches literally every branch including those two.
+    """Tier 2: #6241 — the population-derivation gap itself. ``agui_submit``
+    runs ONE ``await`` before any ``ptype ==`` branch: ``registry.
+    ensure_running(agent_name)`` (its own line, ~1518) — reached by every
+    classified ``ptype`` except ``heartbeat`` / ``TOOL_CALL_RESULT`` (both
+    return earlier). ``payload = await request.json()`` runs even earlier,
+    before ``ptype`` is even read, so it reaches literally every branch
+    including those two.
 
-    Strip-falsify (in-file Edit, per lead-coder's own instruction — no
-    ``git stash``/``checkout``/``restore``): temporarily flipped
-    :func:`_prologue_await_reprs`'s own ``if`` guard so it walked ONLY the
-    bodies of ``ptype ==`` branches (the OLD, #6083 ⑵-a population shape)
-    instead of skipping them — i.e. reverted the population-derivation
-    itself back to "the ``ptype ==`` branch's own await", exactly the
-    shape lead-coder's brief named as today's blind spot. Observed RED:
+    Strip-falsify, in-file Edit only (no ``git stash``/``checkout``/
+    ``restore``): temporarily flipped :func:`_prologue_await_reprs`'s own
+    ``if`` guard so it walked ONLY the bodies of ``ptype ==`` branches (the
+    OLD, #6083 ⑵-a population shape) instead of skipping them — i.e.
+    reverted the population-derivation itself back to "the ``ptype ==``
+    branch's own await", the exact shape this PR's own module docstring
+    names as the pre-existing blind spot. Observed RED:
 
         AssertionError: agui_submit's PROLOGUE awaits changed: found
         {'registry.attach(target)', 'registry.attach_session(...)',
