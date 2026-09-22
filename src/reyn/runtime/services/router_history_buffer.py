@@ -453,9 +453,15 @@ def iter_history_content_refs(project_root: "Path") -> "list[tuple[str, bool]]":
     """#5896 stage ② item ① — the ``iter_content_refs`` collaborator
     :func:`reyn.data.workspace.media_store.migrate_history_content_manifest`
     injects: every ``(content_ref, spilled)`` pair recorded across EVERY
-    ``history.jsonl`` this project holds (``.reyn/agents/**/history.jsonl``
-    — the same glob :func:`reyn.runtime.history_tail_reader.
-    aggregate_history_stats` already uses to enumerate them).
+    history file this project holds — the SAME 2-glob union
+    :func:`reyn.runtime.history_tail_reader.aggregate_history_stats` uses
+    (#6240/#6248: ``**/history.jsonl`` for the flat pre-segment file + the
+    active segment, ``**/history/history-*.jsonl`` for sealed segments —
+    see that function's own docstring for why 2 patterns, not 1). This
+    census also counts the old flat file's own refs (unlike a live
+    runtime reader, which never opens it) — it is an offline, explicitly-
+    invoked migration tool, not the "does the product silently read a
+    user's pre-segment history" question owner ruled on.
 
     This is the RUNTIME-layer half of the migration: it alone knows the
     wire vocabulary (``CONTENT_REF_META_KEY``/``SPILLED_META_KEY``) a
@@ -480,7 +486,9 @@ def iter_history_content_refs(project_root: "Path") -> "list[tuple[str, bool]]":
     if not root.is_dir():
         return []
     refs: "dict[str, bool]" = {}
-    for hist_path in sorted(root.glob("**/history.jsonl")):
+    hist_paths = set(root.glob("**/history.jsonl"))
+    hist_paths.update(root.glob("**/history/history-*.jsonl"))
+    for hist_path in sorted(hist_paths):
         try:
             with hist_path.open("r", encoding="utf-8") as f:
                 for raw in f:

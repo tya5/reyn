@@ -2,7 +2,7 @@
 
 Sibling to ``/reset`` (run state) at a different scope: this command
 clears the conversation thread (``Session.history`` + per-agent
-``history.jsonl``). Everything else stays intact:
+``history/`` segment directory). Everything else stays intact:
 
 - ``.reyn/events/``                (P6 audit truth — never touched)
 - ``.reyn/state/wal.jsonl``        (run resume — preserved)
@@ -22,8 +22,8 @@ the history half of the original user request survives; there is no
 longer an action-usage table to clear.
 
 Two-step confirmation pattern mirrors ``/reset`` because the history
-delete is irreversible (= history.jsonl isn't tracked by git in any
-typical project layout).
+delete is irreversible (= the ``history/`` segment directory isn't
+tracked by git in any typical project layout).
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
         return
 
     history = getattr(ctx.session, "history", None)
-    history_path = getattr(ctx.session, "history_path", None)
+    history_dir = getattr(ctx.session, "history_dir", None)
 
     # Snapshot size before any mutation so the report is accurate even if
     # disk deletion is attempted first.
@@ -75,15 +75,38 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
     # Disk deletion first: if it fails the in-memory state is unchanged and
     # the next session restart will see a consistent (uncorrupted) history.
     # Clearing memory first then failing on disk leaves the opposite: the
-    # current session sees empty history but history.jsonl survives and
+    # current session sees empty history but the history/ dir survives and
     # reloads the old turns on next startup.
-    if history_path is not None:
+    #
+    # #6240/#6248: removes the WHOLE ``history/`` segment directory — the
+    # active segment AND every sealed one — not just the active file.
+    # Before #6248 this command unlinked only ``history_path`` (then the
+    # single ``history.jsonl``); with the segment layout that would leave
+    # every SEALED segment behind, so a fresh active segment would look
+    # empty in THIS process while a NEXT restart's hydration walked
+    # `history/` and read the old sealed segments right back in — /clear
+    # would have looked like it worked and then silently reverted. This
+    # is the defect the #6248 design named as "この設計が新しく作る欠陥"
+    # and required closing in the SAME PR.
+    #
+    # A currently-open append handle is invalidated FIRST: on some
+    # platforms (Windows) an open file cannot be removed out from under
+    # its own handle, and even where it can, leaving the handle open
+    # would have the very next append silently recreate the active
+    # segment's old inode's content via a stale buffered write.
+    if history_dir is not None:
+        reset_disk_state = getattr(ctx.session, "_reset_history_disk_state", None)
+        if callable(reset_disk_state):
+            reset_disk_state()
         try:
-            history_path.unlink(missing_ok=True)
+            if history_dir.is_dir():
+                for entry in history_dir.iterdir():
+                    entry.unlink(missing_ok=True)
+                history_dir.rmdir()
         except OSError as exc:
             await reply_error(
                 ctx,
-                f"failed to remove history file {history_path}: {exc}",
+                f"failed to remove history directory {history_dir}: {exc}",
             )
             return
 

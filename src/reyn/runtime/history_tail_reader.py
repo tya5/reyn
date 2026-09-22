@@ -61,6 +61,20 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 
+def _iter_paths_lines_reverse(paths: "list[Path]", *, chunk_size: int) -> "Iterator[str]":
+    """#6240/#6248: chain :func:`_iter_raw_lines_reverse` across MULTIPLE
+    files, in the order *paths* is given — the segment-aware sibling every
+    backward reader below now sources from. *paths* is caller-ordered
+    (newest-segment-first for a tail/backward read); this function adds no
+    ordering of its own, only concatenation, so the existing per-file
+    reverse-chunk logic (the part #4387 Phase B ① already got right) is
+    reused UNCHANGED, once per segment, rather than reimplemented for a
+    directory. A single-element list reduces to exactly
+    :func:`_iter_raw_lines_reverse`'s own behavior."""
+    for path in paths:
+        yield from _iter_raw_lines_reverse(path, chunk_size=chunk_size)
+
+
 def _iter_raw_lines_reverse(path: Path, *, chunk_size: int) -> "Iterator[str]":
     """Yield *path*'s lines one at a time, newest-first, reading backward
     from EOF in growing-safe chunks. Shared by :func:`read_history_tail`
@@ -186,6 +200,33 @@ def read_history_tail(
     return collected
 
 
+def read_history_tail_segmented(
+    paths_newest_first: "list[Path]", *, min_lines: int = 200, chunk_size: int = 65536,
+) -> list[str]:
+    """#6240/#6248: the segment-aware sibling of :func:`read_history_tail` —
+    identical stop condition (seen_summary AND collected >= min_lines,
+    else BOF/oldest-segment), sourced from
+    :func:`_iter_paths_lines_reverse` across *paths_newest_first*
+    (typically :func:`reyn.runtime.history_segments.
+    all_segment_paths_newest_first`'s own return) instead of one path.
+    ``[]`` in, ``[]`` out (no segments == nothing to read, same as a
+    missing single file)."""
+    collected: list[str] = []
+    seen_summary = False
+    for line in _iter_paths_lines_reverse(paths_newest_first, chunk_size=chunk_size):
+        collected.append(line)
+        if not seen_summary:
+            try:
+                if json.loads(line).get("role") == "summary":
+                    seen_summary = True
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        if len(collected) >= min_lines and seen_summary:
+            break
+    collected.reverse()
+    return collected
+
+
 def read_history_tail_with_byte_budget(
     path: Path, *, min_lines: int = 200, max_bytes: int, chunk_size: int = 65536,
 ) -> "tuple[list[str], bool]":
@@ -254,6 +295,37 @@ def read_history_tail_with_byte_budget(
     except FileNotFoundError:
         return [], False
 
+    collected.reverse()
+    return collected, truncated_unsafe
+
+
+def read_history_tail_with_byte_budget_segmented(
+    paths_newest_first: "list[Path]", *, min_lines: int = 200, max_bytes: int,
+    chunk_size: int = 65536,
+) -> "tuple[list[str], bool]":
+    """Segment-aware sibling of :func:`read_history_tail_with_byte_budget`
+    (#6240/#6248) — same stop conditions (min_lines+summary, or the byte
+    budget), sourced across *paths_newest_first* via
+    :func:`_iter_paths_lines_reverse`. See that function's own docstring
+    for ``truncated_unsafe``'s meaning; unchanged here."""
+    collected: "list[str]" = []
+    seen_summary = False
+    cumulative_bytes = 0
+    truncated_unsafe = False
+    for line in _iter_paths_lines_reverse(paths_newest_first, chunk_size=chunk_size):
+        collected.append(line)
+        cumulative_bytes += len(line.encode("utf-8"))
+        if not seen_summary:
+            try:
+                if json.loads(line).get("role") == "summary":
+                    seen_summary = True
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        if len(collected) >= min_lines and seen_summary:
+            break
+        if cumulative_bytes >= max_bytes:
+            truncated_unsafe = not seen_summary
+            break
     collected.reverse()
     return collected, truncated_unsafe
 
@@ -383,6 +455,68 @@ def read_history_after(
         return [], False
 
     return collected, truncated
+
+
+def read_history_after_segmented(
+    paths_oldest_first: "list[Path]", *, after_seq: int,
+    max_bytes: int = COMPACTION_BATCH_MAX_BYTES,
+) -> "tuple[list[str], bool]":
+    """Segment-aware sibling of :func:`read_history_after` (#6240/#6248) —
+    same skip-then-batch semantics, streamed FORWARD across
+    *paths_oldest_first* (typically :func:`reyn.runtime.history_segments.
+    all_segment_paths_oldest_first`'s own return) instead of one file. A
+    segment wholly below ``after_seq`` costs only its own linear scan (no
+    materialization), same as the single-file version's own prefix skip —
+    multiple small segment files change nothing about that cost shape."""
+    collected: list[str] = []
+    total_bytes = 0
+    truncated = False
+    for path in paths_oldest_first:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        seq = int(json.loads(line).get("seq", 0) or 0)
+                    except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                        seq = 0
+                    if seq != 0 and seq <= after_seq:
+                        continue
+                    line_bytes = len(line.encode("utf-8"))
+                    if collected and total_bytes + line_bytes > max_bytes:
+                        truncated = True
+                        break
+                    collected.append(line)
+                    total_bytes += line_bytes
+        except FileNotFoundError:
+            continue
+        if truncated:
+            break
+    return collected, truncated
+
+
+def read_history_before_segmented(
+    paths_newest_first: "list[Path]", *, before_seq: int, min_lines: int = 200,
+    chunk_size: int = 65536,
+) -> list[str]:
+    """Segment-aware sibling of :func:`read_history_before` (#6240/#6248) —
+    same skip-then-collect semantics, sourced across *paths_newest_first*
+    via :func:`_iter_paths_lines_reverse`."""
+    collected: list[str] = []
+    for line in _iter_paths_lines_reverse(paths_newest_first, chunk_size=chunk_size):
+        try:
+            seq = int(json.loads(line).get("seq", 0) or 0)
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            seq = 0
+        if seq >= before_seq:
+            continue
+        collected.append(line)
+        if len(collected) >= min_lines:
+            break
+    collected.reverse()
+    return collected
 
 
 def read_history_before(
@@ -567,20 +701,36 @@ def rewrite_history_dropping(
 
 
 def aggregate_history_stats(project_root: Path) -> HistoryStorageStats:
-    """#4476 Phase 1: sum :func:`history_file_stats` over every
-    ``history.jsonl`` found anywhere under ``<project_root>/.reyn/agents/``
-    (``**/history.jsonl`` — covers both a top-level agent's own file and any
-    nested spawned-session workspace, without hardcoding the exact nesting
-    depth, which is an internal detail of ``registry.py`` this module has no
-    reason to duplicate). A project with no ``.reyn/agents/`` yet returns
-    all-zero, not an error."""
+    """#4476 Phase 1: sum :func:`history_file_stats` over every history file
+    found anywhere under ``<project_root>/.reyn/agents/`` — THREE shapes,
+    all real disk usage (#6240/#6248, architect design ④ "数える側" —
+    unlike the READ side, which deliberately never opens the pre-segment
+    flat file, the disk-usage report must count it or the arc's own
+    headline number (547 MB) under-reports):
+
+    - ``**/history.jsonl`` — covers BOTH the pre-segment flat file
+      (``<agent>/history.jsonl``) AND a post-segment session's ACTIVE
+      segment (``<agent>/history/history.jsonl``) with the SAME glob,
+      since ``**`` matches any depth and both end in that literal name —
+      no special-casing needed for those 2 shapes.
+    - ``**/history/history-*.jsonl`` — SEALED segments (#6248's own
+      naming, :mod:`reyn.runtime.history_segments`), which the glob above
+      does NOT match (their name is never literally ``history.jsonl``).
+      Scoped to inside a ``history/`` directory specifically (not a bare
+      ``**/history-*.jsonl``) so this can never accidentally match an
+      unrelated file that happens to start with ``history-``.
+
+    A project with no ``.reyn/agents/`` yet returns all-zero, not an
+    error."""
     agents_dir = project_root / ".reyn" / "agents"
     if not agents_dir.is_dir():
         return HistoryStorageStats(file_count=0, total_bytes=0, total_lines=0)
     file_count = 0
     total_bytes = 0
     total_lines = 0
-    for hist_path in sorted(agents_dir.glob("**/history.jsonl")):
+    hist_paths = set(agents_dir.glob("**/history.jsonl"))
+    hist_paths.update(agents_dir.glob("**/history/history-*.jsonl"))
+    for hist_path in sorted(hist_paths):
         b, lines = history_file_stats(hist_path)
         file_count += 1
         total_bytes += b

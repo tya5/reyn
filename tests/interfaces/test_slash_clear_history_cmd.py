@@ -39,10 +39,10 @@ class _FakeSession:
         self,
         *,
         history: list | None = None,
-        history_path=None,
+        history_dir=None,
     ) -> None:
         self.history = history
-        self.history_path = history_path
+        self.history_dir = history_dir
         self._outbox: list[OutboxMessage] = []
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
@@ -130,10 +130,15 @@ async def test_clear_history_confirm_nothing_to_clear() -> None:
     assert "nothing" in text.lower() or "empty" in text.lower()
 
 
-class _FailingPath:
-    """Stub Path that raises OSError on unlink — simulates a write-protected file."""
+class _FailingHistoryDir:
+    """Stub history-dir Path that raises OSError while being enumerated —
+    simulates a write-protected ``history/`` directory (#6240/#6248: the
+    handler now iterates + rmdir's a directory, not a single ``unlink``)."""
 
-    def unlink(self, missing_ok: bool = False) -> None:
+    def is_dir(self) -> bool:
+        return True
+
+    def iterdir(self):
         raise OSError("permission denied")
 
 
@@ -148,7 +153,8 @@ def test_clear_alias_registered() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
-    """Tier 2: when history_path.unlink() fails, in-memory history must NOT be cleared.
+    """Tier 2: when the ``history/`` directory deletion fails, in-memory
+    history must NOT be cleared.
 
     Falsification (old code): the old ordering cleared memory BEFORE the disk
     deletion attempt.  Under the old code this test would fail because history
@@ -156,15 +162,15 @@ async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
     causes history to silently reload on next startup.
     """
     history: list = ["turn1", "turn2"]
-    session = _FakeSession(history=history, history_path=_FailingPath())
+    session = _FakeSession(history=history, history_dir=_FailingHistoryDir())
     await clear_history_cmd(_ctx(session), "confirm")
 
     # Memory must be unchanged — disk failed so nothing was committed.
     assert history == ["turn1", "turn2"], (
         "in-memory history was cleared even though disk deletion failed; "
         "old code cleared memory first then returned on OSError, leaving "
-        "history empty in-memory but history.jsonl intact on disk — "
+        "history empty in-memory but the history/ dir intact on disk — "
         "next startup would silently reload old turns"
     )
     # Must have emitted an error reply (not a success).
-    assert session.error_text(), "expected an error reply when unlink raises OSError"
+    assert session.error_text(), "expected an error reply when the directory removal raises OSError"

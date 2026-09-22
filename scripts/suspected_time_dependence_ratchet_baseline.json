@@ -16,7 +16,7 @@
     "tests/core/test_3792_pr2_session_injection.py": 1,
     "tests/core/test_4387_active_branch_history_extend_on_demand.py": 2,
     "tests/core/test_5192_state_log_wal_no_toctou_guard.py": 1,
-    "tests/core/test_5759_history_jsonl_gc.py": 10,
+    "tests/core/test_5759_history_jsonl_gc.py": 11,
     "tests/core/test_a2a_restart_resume_292.py": 6,
     "tests/core/test_active_branch_history_scan_bound_2941.py": 3,
     "tests/core/test_branch_registry_2a.py": 5,
