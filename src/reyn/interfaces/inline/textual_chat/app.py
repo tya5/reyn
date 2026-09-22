@@ -1662,6 +1662,20 @@ class TextualChatApp(App):
 
         self._wire_fifo: "_asyncio.Queue[Coroutine[Any, Any, None]]" = _asyncio.Queue()
         self._wire_fifo_worker: "object | None" = None
+        #: #6077 proposal 5 (architect ruling): the wire FIFO's serial
+        #: design is correct (docstring above) but invisible when it is
+        #: stuck — ``qsize()`` alone cannot show a jam with 1 unit
+        #: in-flight and 0 waiting (the exact "owner hits Enter, nothing
+        #: happens for seconds" shape #6077 reports). ``_drain_wire_fifo``
+        #: stamps this with ``self._clock()`` (the SAME injectable clock
+        #: the tool-elapsed timer already uses — see that field's own
+        #: comment above — never a second, new clock) the instant it takes
+        #: a unit off the queue, and clears it back to ``None`` the instant
+        #: that unit finishes (success or failure alike). ``None`` means
+        #: "nothing in flight" — the ONLY state :meth:`_status_text` reads
+        #: as "don't show the wire segment at all" (see that method and
+        #: ``chrome.status_line_text``'s own docstrings).
+        self._wire_fifo_inflight_started_at: "float | None" = None
         #: #4761 ②: the App's own message-pump heartbeat — incremented by
         #: :meth:`on_timer` ONLY for :attr:`_pump_heartbeat_timer`'s own
         #: ticks, which (no ``callback=`` given to ``set_interval``) post an
@@ -2464,7 +2478,20 @@ class TextualChatApp(App):
         (always constructed, unlike ``_stray_output_stats`` above) — the
         SAME "prepend, don't replace" segment shape #5168 established,
         applied to a different failure class (a pump call site raising,
-        not a stray stdout/stderr write)."""
+        not a stray stdout/stderr write).
+
+        #6077 proposal 5 (architect ruling): ``wire_fifo_waiting`` reads
+        ``self._wire_fifo.qsize()`` directly — the EXISTING
+        ``asyncio.Queue`` count, never a new counter (a second source of
+        truth for the same fact the architect explicitly rejected).
+        ``wire_fifo_inflight_elapsed`` reads
+        :meth:`_wire_fifo_inflight_elapsed`, ``None`` unless a unit is
+        currently in flight — ``qsize()`` alone cannot show that case (1
+        in flight, 0 waiting still looks "empty"), which is why both are
+        threaded through rather than only the queue length. Deliberately
+        NO THRESHOLD (architect ruling): both numbers are shown for the
+        entire duration a unit is in flight, never gated on "N seconds
+        elapsed" — the operator judges slow vs. stuck, not this method."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         warn_percent = getattr(
             getattr(self._config, "tui", None),
@@ -2479,6 +2506,8 @@ class TextualChatApp(App):
             warn_percent=warn_percent,
             diagnostics_count=diagnostics_count,
             pump_swallow_count=self._pump_swallow_stats.count,
+            wire_fifo_waiting=self._wire_fifo.qsize(),
+            wire_fifo_inflight_elapsed=self._wire_fifo_inflight_elapsed(),
         )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:
@@ -3952,9 +3981,23 @@ class TextualChatApp(App):
         known-cheap interval, not "any timer anywhere in the app fired,"
         which would make its cadence depend on unrelated widgets' own timer
         churn.
+
+        #6077 proposal 5: this heartbeat tick is ALSO the only thing that
+        can advance the wire-FIFO status segment while the FIFO is
+        genuinely stuck — :meth:`_refresh_status` otherwise only runs on
+        frame arrival (``_refresh_live_chrome``'s own docstring), and a
+        stuck send is EXACTLY the case where no frame arrives. Gated on
+        :attr:`_wire_fifo_inflight_started_at` being set (never
+        unconditional) so an idle app — the overwhelming common case —
+        pays nothing extra per tick beyond the ``is None`` check itself;
+        :meth:`_refresh_status` only actually runs while something is
+        genuinely in flight, i.e. never "heavier," only "as heavy, when
+        there is something to show."
         """
         if event.timer is self._pump_heartbeat_timer:
             self._pump_ticks += 1
+            if self._wire_fifo_inflight_started_at is not None:
+                self._refresh_status()
         await super().on_timer(event)
 
     def reset_loop_tripwire(self) -> None:
@@ -8791,13 +8834,52 @@ class TextualChatApp(App):
         """The FIFO's one consumer: units run strictly one after another, in
         arrival order. A unit's own failure is its own to report (the
         dispatcher and :meth:`_submit_over_wire` both catch and draw);
-        this loop only guards against one escaping and stopping the rest."""
+        this loop only guards against one escaping and stopping the rest.
+
+        #6077 proposal 5: stamps ``self._wire_fifo_inflight_started_at``
+        the instant a unit is taken off the queue, clears it back to
+        ``None`` in a ``finally`` (success, failure, or a future
+        cancellation alike) so a unit that raises never leaves a stale
+        timestamp behind for the NEXT unit to inherit. This is the only
+        producer of that field — see its own comment at the ``__init__``
+        assignment for why no second clock/counter exists.
+
+        ``_refresh_status()`` is called at both the start AND the clear —
+        the SAME "call it directly from the event that changed the fact"
+        pattern every other status-affecting handler in this class already
+        uses (:meth:`on_stray_output_captured`, the durability-halt
+        refresh, the destination-change refresh — see their own call
+        sites), not a bypass of it: no incoming frame otherwise arrives
+        to trigger a redraw while a unit is stuck (the exact case this
+        segment exists for), and without the CLEAR-side call the status
+        line would keep showing a unit as in-flight forever after it
+        actually finished. :meth:`on_timer`'s own heartbeat-gated call
+        (see that method) is what keeps the elapsed number advancing
+        DURING a long in-flight unit, between these two edges."""
         while True:
             unit = await self._wire_fifo.get()
+            self._wire_fifo_inflight_started_at = self._clock()
+            self._refresh_status()
             try:
                 await unit
             except Exception:
                 logger.exception("textual chat: wire FIFO unit failed")
+            finally:
+                self._wire_fifo_inflight_started_at = None
+                self._refresh_status()
+
+    def _wire_fifo_inflight_elapsed(self) -> "float | None":
+        """#6077 proposal 5: ``None`` when nothing is in flight (the
+        :meth:`_status_text` deny gate); otherwise the elapsed seconds
+        since :meth:`_drain_wire_fifo` took the current unit off the
+        queue, read off the SAME injected ``self._clock`` that stamped
+        it — never ``time.monotonic()`` called fresh here, which would
+        make this field driftable from the stamp by whatever clock a test
+        injects."""
+        started = self._wire_fifo_inflight_started_at
+        if started is None:
+            return None
+        return self._clock() - started
 
     def _submit_failed(self, local_id: str, exc: BaseException) -> None:
         """Shared failure path of :meth:`_submit` (slash) and
