@@ -1643,6 +1643,23 @@ class Session:
         # agents/<name>/ is state-only (PR20); Agent-derived workspace_dir, ensure it exists (FP-0043 Stage 2)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
+        # #6077 提案 1: a session-lifetime append handle for history.jsonl —
+        # opened lazily (first ``_append_history`` call), reused for every
+        # subsequent append (``write`` + ``flush``, never a per-message
+        # ``open``/``close``). Real-time AV on the owner's Windows machine
+        # hooks file OPEN, not write/flush — 1 ``open`` per message meant 1
+        # AV scan per message against a file measured at 547 MB (#6240).
+        # Owned and closed in exactly ONE place each: opened lazily by
+        # ``_history_append_handle``, closed by
+        # ``_invalidate_history_append_handle`` from ``run()``'s own
+        # teardown ``finally`` — the session's one end-of-life point.
+        # ``Registry._gc_one_session_history`` (#5759 stage 2) is the only
+        # OTHER writer of this path, and it never touches a LIVE session's
+        # own ``history.jsonl`` at all (architect ruling, #6247 review —
+        # ``Registry._gc_history_jsonl_below``'s own liveness gate excludes
+        # any ``(name, sid)`` this registry holds a live ``Session`` for),
+        # so there is no second opener/invalidator to coordinate with here.
+        self._history_append_fh: "Any" = None
         self.events_dir = (  # PR20: audit events dir, created lazily by EventStore on first write
             # #3705: anchored on the same root as workspace_dir — was a bare
             # relative `Path(".reyn")`, silently ignoring workspace_state_dir.
@@ -4419,10 +4436,72 @@ class Session:
         # resident ``msg`` above and is NOT written here (its file under
         # history-content/ already is; see that function's docstring). The
         # one ``json.dumps`` of a tool body on the loop is gone with it.
-        with self.history_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(history_record(msg), ensure_ascii=False) + "\n")
+        # #6077 提案 1: write through the session-lifetime handle, not a
+        # fresh ``open``/``close`` per message (see ``_history_append_fh``'s
+        # own docstring on ``__init__`` for why). ``flush()`` is NOT
+        # optional here — ``close()`` used to be what made a just-appended
+        # line visible to a same-turn read-back; without an explicit
+        # ``flush()`` a buffered line would stay invisible to a reader
+        # opening the file fresh (``_durable_active_history_after``,
+        # ``force_compact_now``'s compaction path) until Python's own
+        # buffer happened to fill or the process exited — silently
+        # breaking the synchronous "appended ⇒ readable" contract every
+        # caller of ``_append_history`` relies on.
+        f = self._history_append_handle()
+        f.write(json.dumps(history_record(msg), ensure_ascii=False) + "\n")
+        f.flush()
         self._evict_oldest_resident_entries()
         self._update_untrusted_taint_on_append(msg)
+
+    def _history_append_handle(self) -> "Any":
+        """Return this session's own lazily-opened, session-lifetime append
+        handle onto :attr:`history_path` (#6077 提案 1) — opened at most
+        once per (re)open cycle, reused by every :meth:`_append_history`
+        call until :meth:`_invalidate_history_append_handle` closes it.
+
+        Lazy, not eager at ``__init__`` time: a session whose turn loop
+        never appends (e.g. one that only reads/hydrates) never touches the
+        filesystem for this — matching the old per-call ``open``'s own
+        laziness (it never opened until the first append either)."""
+        if self._history_append_fh is None:
+            self._history_append_fh = self.history_path.open("a", encoding="utf-8")
+        return self._history_append_fh
+
+    def _invalidate_history_append_handle(self) -> None:
+        """Close and drop this session's cached append handle, if one is
+        open (#6077 提案 1). The NEXT :meth:`_append_history` call reopens
+        lazily via :meth:`_history_append_handle` — against whatever inode
+        currently sits at :attr:`history_path`.
+
+        ONE caller: ``run()``'s own teardown ``finally`` — the session's
+        end-of-life point; an un-invalidated handle leaking past it is a
+        Windows file lock (owner-hit failure mode named in #6077's own
+        brief). ``Registry._gc_one_session_history`` (#5759 stage 2) is
+        NOT a second caller (architect ruling, #6247 review): that path's
+        own ``rewrite_history_dropping`` always replaces ``history.jsonl``'s
+        inode when it runs (``tmp.replace(path)`` is unconditional once the
+        file exists), which WOULD strand a handle opened before the
+        replace — but ``Registry._gc_history_jsonl_below``'s own liveness
+        gate keeps that rewrite from ever reaching a ``(name, sid)`` this
+        registry holds a live ``Session`` for in the first place, so there
+        is nothing here to invalidate on the GC side. One path, one file,
+        one writer per liveness state — never two openers of the same
+        handle to coordinate.
+
+        Best-effort close (mirrors every other teardown step in ``run()``'s
+        own ``finally`` chain — a close failure must never block session
+        teardown): swallows any exception ``close()`` raises."""
+        fh = self._history_append_fh
+        if fh is None:
+            return
+        self._history_append_fh = None
+        try:
+            fh.close()
+        except Exception:  # noqa: BLE001 -- teardown fault isolation, matches sibling steps in run()'s finally
+            logger.warning(
+                "Session._invalidate_history_append_handle: close() raised for agent '%s'",
+                self.agent_name, exc_info=True,
+            )
 
     def _enforce_per_message_content_cap(self, msg: ChatMessage) -> None:
         """#6042 — the per-message durable-content byte cap, checked at
@@ -10015,6 +10094,13 @@ class Session:
             try:
                 await self._drain_on_shutdown()
             finally:
+                # #6077 提案 1: close the session-lifetime history.jsonl
+                # append handle right at this session's own end-of-life
+                # point — an un-closed handle here is exactly the failure
+                # mode #6077's own brief names for Windows (a lingering
+                # open handle shows up as a file lock). Best-effort,
+                # mirrors every other teardown step below.
+                self._invalidate_history_append_handle()
                 # #2608 H4: stop the filesystem watcher (join the observer
                 # thread). Nested finally so a raising ``_drain_on_shutdown``
                 # can never skip this — the watcher must be torn down whenever

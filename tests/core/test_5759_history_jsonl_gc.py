@@ -30,6 +30,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import _HISTORY_HYDRATE_MIN_LINES
+from tests._support.agent_session import make_session
 
 
 def _no_factory(_profile):
@@ -428,3 +429,122 @@ async def test_every_listed_rewind_point_has_no_conversation_gap_after_gc(tmp_pa
 # its internal stop condition through the GC's own public path would be
 # the "same expression on both sides" shape CLAUDE.md's test-review
 # question 2 rejects.
+
+
+# #6077 提案 1 / #6247 review (architect ruling): GC must never rewrite a
+# LIVE session's own history.jsonl -- Session now holds a session-lifetime
+# append handle onto that path, and GC's own `rewrite_history_dropping`
+# always replaces the file's inode when it runs (`tmp.replace(path)` is
+# unconditional once the file exists), which would strand that handle on
+# a detached inode. The 2 tests below are the required deny/present pair
+# (architect's own instruction: neither alone is sufficient) -- both
+# witnessed at the file level (`Path.stat().st_ino`), never through a
+# call count or a private flag, so a liveness gate that runs but does
+# nothing (or a GC that silently stops running for everyone) cannot pass
+# either one vacuously.
+def _live_scenario(tmp_path, name: str) -> tuple[AgentRegistry, Path]:
+    """The SAME GC-eligible scenario
+    ``test_folded_middle_range_is_gcd_head_and_tail_survive`` uses (seq
+    4-6 folded, below floor, outside margin) -- shared here so the
+    deny/present pair below exercise identical eligibility, differing
+    ONLY in whether a live Session is registered for ``(name, "main")``."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, name)
+    return reg, _write_history(
+        tmp_path, name,
+        [_turn(1), _turn(2), _turn(3)]
+        + _raw_range(4, 6)
+        + [_summary(20, covers_from=4, covers_through=6)]
+        + _pad_past_margin(7),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_sessions_own_history_jsonl_inode_survives_gc(tmp_path):
+    """Tier 2: #6077 deny-side witness (architect ruling, #6247 review) --
+    a (name, sid) this registry holds a LIVE in-process ``Session`` for
+    must have its ``history.jsonl`` inode UNCHANGED by a GC pass, even
+    though every content-level eligibility condition (below floor,
+    outside margin, inside a recorded fold) is met -- the exact same
+    scenario ``test_folded_middle_range_is_gcd_head_and_tail_survive``
+    drives to a real rewrite for a non-live session (see the present-side
+    sibling test below).
+
+    Strip-falsify (in-file Edit only, no ``git checkout``/``stash``/
+    ``restore``): removing the
+    ``if self.get_session(name, sid) is not None: continue`` liveness
+    gate in ``AgentRegistry._gc_history_jsonl_below`` turned this RED
+    with::
+
+        AssertionError: a LIVE session's history.jsonl must never be
+        rewritten by GC -- inode changed from <N> to <M>. If this
+        failed, the liveness gate in
+        AgentRegistry._gc_history_jsonl_below was removed or bypassed.
+
+    restored (Edit), confirmed GREEN again."""
+    name = "epsilon"
+    reg, path = _live_scenario(tmp_path, name)
+    log = reg.state_log
+    for _ in range(20):
+        await _put(log, name, "x")
+
+    live_session = make_session(agent_name=name, state_log=StateLog(tmp_path / "epsilon-live.wal"))
+    reg._store_session(name, live_session)  # default sid="main" -- matches _discover_session_ids's own default
+
+    before_ino = path.stat().st_ino
+
+    await _advance_floor_past(reg, 6)
+    await reg._prune_generations_below(1)
+
+    after_ino = path.stat().st_ino
+    assert after_ino == before_ino, (
+        "a LIVE session's history.jsonl must never be rewritten by GC -- "
+        f"inode changed from {before_ino} to {after_ino}. If this failed, "
+        "the liveness gate in AgentRegistry._gc_history_jsonl_below was "
+        "removed or bypassed."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_non_live_sessions_history_jsonl_inode_still_changes_on_gc(tmp_path):
+    """Tier 2: #6077 present-side witness (architect ruling, #6247 review)
+    -- the sibling of the deny-side test above, proving the liveness gate
+    does not simply kill GC for everyone. The IDENTICAL eligible scenario,
+    with NO live ``Session`` registered for ``(name, "main")``, must still
+    have its ``history.jsonl`` inode CHANGE (GC's own
+    ``rewrite_history_dropping`` really ran and replaced the file) --
+    the same real-rewrite fact
+    ``test_folded_middle_range_is_gcd_head_and_tail_survive`` already
+    pins at the content level, restated here at the inode level so the
+    2 tests are a true deny/present pair over the SAME observable.
+
+    Strip-falsify (in-file Edit only, no ``git checkout``/``stash``/
+    ``restore``): forcing the liveness gate to always skip (editing
+    ``if self.get_session(name, sid) is not None: continue`` to
+    ``if True: continue`` in ``AgentRegistry._gc_history_jsonl_below``)
+    turned this RED with::
+
+        AssertionError: a NON-live session's history.jsonl must still be
+        rewritten by GC -- inode unchanged at <N>. If this failed, the
+        liveness gate in AgentRegistry._gc_history_jsonl_below is
+        skipping GC unconditionally, not just for live sessions.
+
+    restored (Edit), confirmed GREEN again."""
+    name = "zeta"
+    reg, path = _live_scenario(tmp_path, name)
+    log = reg.state_log
+    for _ in range(20):
+        await _put(log, name, "x")
+
+    before_ino = path.stat().st_ino
+
+    await _advance_floor_past(reg, 6)
+    await reg._prune_generations_below(1)
+
+    after_ino = path.stat().st_ino
+    assert after_ino != before_ino, (
+        "a NON-live session's history.jsonl must still be rewritten by "
+        f"GC -- inode unchanged at {before_ino}. If this failed, the "
+        "liveness gate in AgentRegistry._gc_history_jsonl_below is "
+        "skipping GC unconditionally, not just for live sessions."
+    )
