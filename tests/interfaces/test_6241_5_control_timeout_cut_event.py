@@ -191,7 +191,9 @@ async def test_a_second_cut_of_the_same_ptype_emits_no_second_event_but_still_co
     established — the SAME ``ptype`` cut twice durably records exactly
     ONE audit-event (a persistently slow network must not flood
     ``.reyn/events``), while ``ControlTimeoutCutStats.counts`` keeps the
-    complete tally an operator or test can still read."""
+    complete tally readable from a test or a debugger — not from any
+    operator-facing surface (none reads ``counts`` today; the audit-event
+    itself, in ``.reyn/events``, is the operator-facing side)."""
     reyn_dir = tmp_path / ".reyn"
     reyn_dir.mkdir()
     monkeypatch.chdir(tmp_path)

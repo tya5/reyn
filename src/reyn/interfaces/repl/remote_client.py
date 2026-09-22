@@ -178,8 +178,12 @@ def _record_control_timeout_cut(ptype: str, read_timeout: "float | None") -> Non
     ``pump_exception_swallowed`` established: a slow network cuts the
     SAME ptype on every retry, so a durable record per OCCURRENCE would
     flood ``.reyn/events``; the always-complete per-ptype count stays
-    available via ``ControlTimeoutCutStats.counts`` for an operator or
-    test that needs the tally).
+    available via ``ControlTimeoutCutStats.counts``, readable from a
+    test or a debugger — there is no operator-facing surface that reads
+    it today (no status line, no log line, no command). The audit-event
+    this function emits, landing in ``.reyn/events``, is the ONLY
+    operator-facing side of this mechanism; ``counts`` itself does not
+    reach one).
 
     Never carries the exception's own message or traceback (the SAME
     posture ``pump_exception_swallowed``'s own doc row states verbatim)
