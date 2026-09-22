@@ -8432,12 +8432,17 @@ class TextualChatApp(App):
         start its spinner, mirroring :meth:`_begin_running_indicator`'s own
         two-step shape (stamp :data:`_RUNNING_SINCE_KEY`, register the
         per-entry ``animate_entry`` timer) rather than
-        :meth:`_coalesce_pipeline_step`'s own ``start_entry_animation``
-        call — that method does not exist on the installed
-        ``textual_flowview`` (confirmed: its own ``try``/``except`` swallows
-        the ``AttributeError`` every time, so a pipeline run's row never
-        actually spins today — a real, pre-existing, OUT-OF-SCOPE bug for
-        THIS issue, disclosed rather than silently copied into new code).
+        :meth:`_coalesce_pipeline_step`'s own approach AT THE TIME THIS WAS
+        WRITTEN — that method then called a ``start_entry_animation`` that
+        did not exist on the installed ``textual_flowview``, silently
+        swallowed by its own ``try``/``except`` (a real, pre-existing,
+        OUT-OF-SCOPE bug for THIS issue, disclosed rather than silently
+        copied into new code). #5731 has since fixed that call site —
+        :meth:`_coalesce_pipeline_step` now calls
+        :meth:`_begin_running_indicator` itself, the same helper this
+        method already mirrors — so the two paths are no longer diverging
+        on a known-broken sibling; this method's own two-step shape is
+        unchanged and still the correct one to keep.
 
         #6085 stage 1: idempotency is now keyed on the entry's own
         :attr:`~textual_flowview.Entry.state`, not merely "is a reference
