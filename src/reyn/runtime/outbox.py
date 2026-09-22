@@ -20,6 +20,13 @@ scan misses. The validation is **production-side ONLY** — the AG-UI decode pat
 rebuilds an OutboxMessage from an UNTRUSTED remote frame and must degrade
 gracefully on an unknown wire kind (ignore-unknown, never fail-close), so it uses
 :meth:`OutboxMessage.from_wire`, which bypasses the vocabulary check.
+
+**Sentinel-family text invariant (#6230 stage 3).** Every ``__``-prefixed
+kind in the vocabulary except ``__end__`` (see :data:`_SENTINEL_FAMILY_KINDS`)
+additionally REQUIRES a non-empty ``text`` at construction — the same
+"identity at construction time, never recovered later" shape #5047 already
+established for the intervention family, applied to stage 1/2's own subject
+(a legible representation) instead of an intervention id.
 """
 from __future__ import annotations
 
@@ -204,6 +211,43 @@ def legible_degrade_text(kind: str, text: str) -> str:
 # exactly ``{"intervention"}`` rather than "growing" the way an earlier
 # draft of this comment expected.
 _INTERVENTION_FAMILY_KINDS: "frozenset[str]" = frozenset({"intervention"})
+
+# #6230 stage 3 (issue thread ruling, architect + lead-coder): the SAME
+# structural-fix shape #5047 established two paragraphs up — "must carry its
+# own identity at construction time, never recovered later by position or
+# absence" — applied to stage 1/2's own subject (a legible ``text``) instead
+# of an intervention's ``intervention_id``.
+#
+# ★ Population, NOT a hand-maintained literal list: every ``__``-prefixed
+# member of :data:`VOCABULARY`, MINUS the one name below. It is DERIVED from
+# the vocabulary the ``__post_init__`` gate two members down already
+# enforces — a kind cannot reach this class's own ``__init__`` at all
+# unless it is already in VOCABULARY (ADR-0039 P6b, pre-existing), so this
+# set can never miss a future sentinel added to DISPLAY_KINDS or
+# CONTROL_KINDS the way a fresh ``git grep`` of this file alone would (that
+# grep is exactly the needle architect's own review named as too narrow —
+# it sees a literal in ``outbox.py``, never a kind defined or built
+# elsewhere, and never a dynamically-assembled one). Adding a new
+# ``__``-prefixed kind to either frozenset above enrolls it here
+# AUTOMATICALLY, with no second edit required — that is what "closed by
+# construction" means for this population specifically.
+#
+# The one exclusion, ``"__end__"``, is irreducible — not a growing list,
+# a single named carve-out with its own reason: it is not a slash command's
+# response (the observable discriminator this arc settled on) but the
+# stream TERMINATOR, and its ``text`` is ``""`` BY CONSTRUCTION at its one
+# call site (``transport/agui/endpoint.py:1002``, unconditionally). Every
+# caller's own frame loop returns/breaks on ``kind == "__end__"`` before
+# any rendering is attempted (the same fact :func:`legible_degrade_text`'s
+# own docstring already documents) — forcing a legible ``text`` onto it
+# would fabricate a human sentence for a frame that, by design, carries
+# none (this arc's own repeated "never a minted placeholder" ruling). A
+# FUTURE purely-transport-control ``__``-prefixed kind would need this same
+# reasoning restated for its own name before joining the exclusion — this
+# module does not pre-guess what that kind might be.
+_SENTINEL_FAMILY_KINDS: "frozenset[str]" = frozenset(
+    kind for kind in VOCABULARY if kind.startswith("__") and kind != "__end__"
+)
 
 # #6184: the SINGLE enumeration of OutboxMessage's wire-safe fields is
 # "every dataclass field except the ones named here" — derived by
@@ -654,6 +698,30 @@ class OutboxMessage:
                 "meta['intervention_id'] — every intervention-family frame "
                 "must carry its own identity at construction time, never "
                 "recovered later by position or absence (#5047)."
+            )
+        # #6230 stage 3 (architect's confirmed design, same shape as #5047
+        # two paragraphs up): a legible representation is not optional for
+        # the sentinel family. Stage 1 made `text` the human-readable
+        # channel and stage 2 made an UNRECOGNIZED kind degrade legibly at
+        # render time — this closes the gap between the two: a RECOGNIZED
+        # sentinel built with no `text` at all would still slip a blank
+        # line past stage 2 (`legible_degrade_text` never runs — the kind
+        # IS known) and land back in the pre-#6230 hole. Checked HERE, the
+        # SAME constructor that already validates `kind` and the
+        # intervention family, not a THIRD mechanism a future sentinel
+        # could forget to call. Untrusted WIRE values still cannot
+        # fail-close this way — `from_wire` bypasses this method entirely
+        # (its own docstring: an unknown/incomplete wire frame "MUST
+        # degrade gracefully ... never fail-close"); a wire-decoded
+        # sentinel with an empty `text` still degrades through stage 2's
+        # `legible_degrade_text` at render time instead of raising here.
+        if self.kind in _SENTINEL_FAMILY_KINDS and not self.text:
+            raise ValueError(
+                f"OutboxMessage.kind {self.kind!r} requires a genuine, "
+                "non-empty `text` — every sentinel-family frame must carry "
+                "its own legible representation at construction time, "
+                "never recovered later by position or absence (#5047 "
+                "shape, #6230 stage 3)."
             )
         # #6184 段2a-2: the ONE derivation point for `id`/`parent_id` —
         # see :func:`_derive_id_and_parent_id`'s own docstring for the
