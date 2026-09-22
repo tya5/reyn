@@ -77,7 +77,7 @@ def _client():
 def _read_direct_web_events(tmp_project: Path) -> list[dict]:
     """Read every event line under .reyn/events/direct/web/ (#5065's
     ``surface="web"`` directory, month-dir nested — see
-    ``EventStore._open_new_file``)."""
+    ``EventStore._next_active_path``)."""
     web_dir = tmp_project / ".reyn" / "events" / "direct" / "web"
     if not web_dir.is_dir():
         return []

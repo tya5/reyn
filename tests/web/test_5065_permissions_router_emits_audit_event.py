@@ -103,7 +103,7 @@ def _read_direct_web_events(tmp_project: Path) -> list[dict]:
     if not web_dir.is_dir():
         return []
     out: list[dict] = []
-    for f in sorted(web_dir.glob("*/*.jsonl")):  # month-dir nesting, see EventStore._open_new_file
+    for f in sorted(web_dir.glob("*/*.jsonl")):  # month-dir nesting, see EventStore._next_active_path
         for line in f.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line:

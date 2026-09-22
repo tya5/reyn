@@ -12,13 +12,30 @@ every audit event, not just WAL appends). This suite verifies:
   unconditionally regardless of whether the loop froze);
 - write order is preserved (enqueue order == emission order == on-disk
   order), the "WAL-event ordering" property the owner asked about directly;
-- rotation now uses an in-memory byte counter, never ``Path.stat()`` (the
-  old code's `.stat()` fired on literally every write() call once max_bytes
-  is nonzero — the actual default — not a rare path);
+- rotation's SIZE check reads the in-memory byte counter, never a
+  ``Path.stat()`` of ``st_size`` (the old code's `.stat()` fired on
+  literally every write() call once max_bytes is nonzero — the actual
+  default — not a rare path);
 - ``aclose()``/``flush()`` drain pending writes, since ``write()`` is
   fire-and-forget;
 - a caller with no running event loop (e.g. a synchronous CLI path) still
   gets an immediate, synchronous write — no regression for that case.
+
+#6077 提案 3 + 提案 6 (architect ruling) moved ``json.dumps``, the rotation
+accounting + its own file creation/recovery, and (提案 6) the active file's
+``open``/``close`` into ONE off-loop owner (``EventStore._write_owned``) —
+see that method's own docstring. Two consequences for these tests:
+
+- ``active_path`` is no longer synchronously accurate immediately after a
+  ``write()`` call while a loop is running — it reflects the last write the
+  worker actually DRAINED, not the last one enqueued. Every test below that
+  needs the current value now ``await``s ``flush()``/``aclose()`` first (the
+  established pattern this file's own purge-adjacent tests already used).
+- holding a session-lifetime handle open (提案 6) needs its OWN per-write
+  ``stat()`` to detect the file being deleted/replaced out from under it —
+  a DIFFERENT check than the old size-based rotation ``.stat()`` this suite
+  originally guarded against zero of. See
+  ``test_rotation_never_calls_path_stat``'s own updated docstring.
 
 Real ``EventStore``/``DurabilityWorker`` instances, real filesystem
 (``tmp_path``), no mocks of collaborators.
@@ -52,14 +69,14 @@ async def test_slow_write_does_not_freeze_the_event_loop(tmp_path, monkeypatch):
     unconditionally regardless of whether the loop actually froze.
     """
     store = EventStore(tmp_path / "events")
-    orig_write_sync = store._write_line_sync
+    orig_write_owned = store._write_owned
 
-    def _slow_write_sync(path, line):
+    def _slow_write_owned(data):
         import time
         time.sleep(0.2)
-        return orig_write_sync(path, line)
+        return orig_write_owned(data)
 
-    monkeypatch.setattr(store, "_write_line_sync", _slow_write_sync)
+    monkeypatch.setattr(store, "_write_owned", _slow_write_owned)
 
     ticks = 0
 
@@ -96,10 +113,20 @@ async def test_write_order_preserved_across_concurrent_emits(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_rotation_never_calls_path_stat(tmp_path, monkeypatch):
-    """Tier 2: `_should_rotate()` uses the in-memory byte counter, not
-    `Path.stat()` — the old code's stat() fired on EVERY write() call once
-    max_bytes is nonzero (the actual default, 10MB), not a rare path.
+async def test_rotation_size_check_never_stats_for_st_size(tmp_path, monkeypatch):
+    """Tier 2: `_should_rotate()`'s SIZE check uses the in-memory byte
+    counter, never a `Path.stat()` of `st_size` — the old code's stat()
+    fired on EVERY write() call once max_bytes is nonzero (the actual
+    default, 10MB), not a rare path.
+
+    #6077 提案 6 (architect ruling) adds a DIFFERENT, DELIBERATE per-write
+    `.stat()` of its own — `_ensure_active_handle`'s inode-identity check,
+    needed because a session-lifetime open handle has no other way to
+    learn its file was deleted/replaced out from under it (see that
+    method's own docstring). So this test now asserts a BOUNDED count (at
+    most 1 stat per write, for inode identity — never more, and never for
+    `st_size`), not literally zero: the first write never checks (no
+    handle exists yet to validate), so 10 writes bound to at most 9 calls.
 
     Records calls to the ACTIVE store path specifically (rather than raising
     from a global Path.stat monkeypatch, which corrupts pytest's own internal
@@ -118,8 +145,11 @@ async def test_rotation_never_calls_path_stat(tmp_path, monkeypatch):
     for i in range(10):
         store.write(_ev("no_stat", i=i))
     await store.aclose()
-    assert stat_calls == [], (
-        f"_should_rotate() must not stat() the active file — got {len(stat_calls)} calls"
+    assert not stat_calls[9:], (
+        "at most 1 inode-identity stat() per write after the first (which "
+        f"has no handle yet to validate) — got {len(stat_calls)} calls for "
+        "10 writes; a count above 9, or any use of st_size, would mean "
+        "rotation's own SIZE decision started stat()-ing again"
     )
 
 
@@ -127,11 +157,20 @@ async def test_rotation_never_calls_path_stat(tmp_path, monkeypatch):
 async def test_rotation_fires_via_in_memory_counter(tmp_path):
     """Tier 2: a write that pushes the running byte count past max_bytes
     triggers rotation — a NEW active file is opened, proving the counter
-    (not a removed stat() call) still drives rotation correctly."""
+    (not a removed stat() call) still drives rotation correctly.
+
+    #6077 提案 3 (architect ruling) moved the rotation decision itself
+    off-loop (into ``_write_owned``, the same owner ``json.dumps`` moved
+    to) — so ``active_path`` is no longer synchronously accurate the
+    instant ``write()`` returns; each write is followed by ``flush()`` to
+    observe the worker's actually-drained state, the established pattern
+    this suite's own purge-adjacent tests already use."""
     store = EventStore(tmp_path / "events", max_bytes=50)
     store.write(_ev("a", text="x" * 60))  # first write always fits (no rotation check yet)
+    await store.flush()
     first_path = store.active_path
     store.write(_ev("b", text="y"))  # now over max_bytes → should rotate
+    await store.flush()
     second_path = store.active_path
     await store.aclose()
     assert second_path != first_path, "expected rotation to a new file once max_bytes is exceeded"
