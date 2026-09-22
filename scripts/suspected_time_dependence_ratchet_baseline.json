@@ -63,6 +63,7 @@
     "tests/interfaces/test_5837_exec_slash_stage1.py": 2,
     "tests/interfaces/test_5885_remote_compaction_progress_wire.py": 1,
     "tests/interfaces/test_5895_seed_from_frame_values.py": 1,
+    "tests/interfaces/test_6241_5_control_timeout_cut_event.py": 1,
     "tests/interfaces/test_activity_row_3693.py": 1,
     "tests/interfaces/test_agent_delta_round_index_3656.py": 3,
     "tests/interfaces/test_channel_state_webhook_wire_269.py": 2,
