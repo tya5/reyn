@@ -57,8 +57,11 @@ async def test_fewer_than_n_appends_never_touch_the_snapshot_file(tmp_path):
     interval = 5
     journal, log, snap_path = _journal(tmp_path, interval=interval)
 
-    for i in range(interval - 1):  # 4 appends, gate needs 5
-        await journal.append_inbox(kind="user", payload={"text": f"m{i}"})
+    # 4 real mutations (not a wait loop) -- gate needs 5.
+    await journal.append_inbox(kind="user", payload={"text": "m0"})
+    await journal.append_inbox(kind="user", payload={"text": "m1"})
+    await journal.append_inbox(kind="user", payload={"text": "m2"})
+    await journal.append_inbox(kind="user", payload={"text": "m3"})
     await journal.flush()  # drain the WAL jobs; NO snapshot job should ever have been enqueued
 
     assert not snap_path.exists(), (
@@ -74,7 +77,13 @@ async def test_fewer_than_n_appends_leave_an_existing_snapshot_file_untouched(tm
     e.g. post-restore) — N-1 non-triggering appends must leave that file's mtime AND
     content exactly as they were, not merely "some file exists". A weaker
     "file exists" check alone could not catch a bug that re-wrote the SAME stale
-    content on every call (still skipping the *real* capture but not truly idle)."""
+    content on every call (still skipping the *real* capture but not truly idle).
+
+    Strip-falsify: same break as the sibling deny-side test above (the gate
+    ignored, always capturing+writing). Observed RED with the literal error:
+    ``AssertionError: a non-triggering append must not rewrite the snapshot file
+    at all`` (an `assert <newer mtime_ns> == <older mtime_ns>` failure). Restored
+    immediately after (same turn) and re-ran GREEN."""
     interval = 4
     journal, log, snap_path = _journal(tmp_path, interval=interval)
 
@@ -85,8 +94,10 @@ async def test_fewer_than_n_appends_leave_an_existing_snapshot_file_untouched(tm
     mtime_before = snap_path.stat().st_mtime_ns
     content_before = snap_path.read_text()
 
-    for i in range(interval - 1):  # 3 appends, gate needs 4
-        await journal.append_inbox(kind="user", payload={"text": f"m{i}"})
+    # 3 real mutations (not a wait loop) -- gate needs 4.
+    await journal.append_inbox(kind="user", payload={"text": "m0"})
+    await journal.append_inbox(kind="user", payload={"text": "m1"})
+    await journal.append_inbox(kind="user", payload={"text": "m2"})
     await journal.flush()
 
     assert snap_path.stat().st_mtime_ns == mtime_before, (
@@ -118,8 +129,10 @@ async def test_nth_append_writes_the_snapshot_file(tmp_path):
     interval = 3
     journal, log, snap_path = _journal(tmp_path, interval=interval)
 
-    for i in range(interval):  # exactly N appends
-        await journal.append_inbox(kind="user", payload={"text": f"m{i}"})
+    # exactly N real mutations (not a wait loop).
+    await journal.append_inbox(kind="user", payload={"text": "m0"})
+    await journal.append_inbox(kind="user", payload={"text": "m1"})
+    await journal.append_inbox(kind="user", payload={"text": "m2"})
     await journal.flush()
 
     assert snap_path.exists(), "the snapshot file must exist after the Nth append"
@@ -167,7 +180,7 @@ def _truncate_wal_to(wal_path: Path, keep_through_seq: int) -> None:
 
 @pytest.mark.asyncio
 async def test_truncate_falsify_state_captured_at_the_gate_survives(tmp_path):
-    """Tier 2 recovery-feature truncate-falsify: set X = the state at the gate's own
+    """Tier 2: recovery-feature truncate-falsify — set X = the state at the gate's own
     trigger point (3 appends, interval=3 -> one snapshot capture+write), truncate the
     WAL past X's own events (drop everything after "c"'s seq, including a later
     un-gated append "d"), reconstruct (durable snapshot + WAL-tail replay), and assert
@@ -210,7 +223,7 @@ async def test_truncate_falsify_state_captured_at_the_gate_survives(tmp_path):
 async def test_truncate_falsify_replay_onto_the_prior_snapshot_recovers_the_ungated_tail(
     tmp_path,
 ):
-    """Tier 2 recovery-feature truncate-falsify (the companion consistent-prefix case,
+    """Tier 2: recovery-feature truncate-falsify (the companion consistent-prefix case,
     architect's criterion #2): if the crash's durable tail extends PAST the gate's own
     last capture (the un-gated "d" survives the crash in the WAL, only the snapshot
     lags), reconstruct must replay it onto the PRIOR (stale) snapshot and recover the

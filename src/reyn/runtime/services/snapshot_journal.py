@@ -15,7 +15,6 @@ from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.turn_origin import TurnOrigin
 
-
 # #6077 default WAL-append gate (see `_snapshot_interval`'s own comment in
 # `__init__` for the replay-bound justification).
 _DEFAULT_SNAPSHOT_INTERVAL = 20
