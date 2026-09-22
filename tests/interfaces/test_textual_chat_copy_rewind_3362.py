@@ -294,7 +294,7 @@ async def test_copy_sentinel_writes_the_reply_to_the_clipboard(clipboard) -> Non
     reporter called out."""
     transport = ScriptedTransport([
         OutboxMessage(kind="agent", text="the answer is 42"),
-        OutboxMessage(kind="__copy_last_reply__", text=""),
+        OutboxMessage(kind="__copy_last_reply__", text="copy request"),
     ])
     app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
     async with app.run_test() as pilot:
@@ -367,7 +367,7 @@ async def test_copy_with_nothing_buffered_reports_and_writes_nothing(
     """Tier 2: with no reply buffered, ``/copy`` explains itself AND leaves the
     clipboard untouched — a decision-enabling message, not a spurious copy."""
     transport = ScriptedTransport([
-        OutboxMessage(kind="__copy_last_reply__", text=""),
+        OutboxMessage(kind="__copy_last_reply__", text="copy request"),
     ])
     app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
     async with app.run_test() as pilot:
@@ -388,7 +388,7 @@ async def test_streamed_reply_is_copyable(clipboard) -> None:
         OutboxMessage(
             kind="agent", text="streamed answer", meta={"chain_id": "c1"},
         ),
-        OutboxMessage(kind="__copy_last_reply__", text=""),
+        OutboxMessage(kind="__copy_last_reply__", text="copy request"),
     ])
     app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
     async with app.run_test() as pilot:
@@ -408,7 +408,7 @@ async def test_restored_reply_is_copyable(clipboard) -> None:
         ChatMessage(role="assistant", content="restored answer"),
     ])
     transport = ScriptedTransport([
-        OutboxMessage(kind="__copy_last_reply__", text=""),
+        OutboxMessage(kind="__copy_last_reply__", text="copy request"),
     ])
     app = TextualChatApp(transport=transport, read_model=read_model)
     async with app.run_test() as pilot:

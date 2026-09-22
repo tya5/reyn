@@ -251,7 +251,7 @@ class _SentinelTransport(_Transport):
     open — the real public route into the copy path (no ring internals read)."""
 
     async def frames(self) -> "AsyncIterator[DisplayFrame]":
-        yield DisplayFrame(OutboxMessage(kind="__copy_last_reply__", text=""))
+        yield DisplayFrame(OutboxMessage(kind="__copy_last_reply__", text="copy request"))
         await asyncio.Event().wait()
 
 
