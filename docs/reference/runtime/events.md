@@ -823,24 +823,33 @@ no operator-visible signal.
 
 **#6224 correction**: those 4 are not the ONLY `except Exception` blocks in
 `_pump_frames` — of its own ~20, roughly 16 (every EVENT-frame handler, the
-turn-end sweep family, the queue-view seed, the chrome-refresh guards) log
-via `logger.exception` alone, with no counter bump and no audit-event; that
-gap is real and un-closed. #6224 also added a call site OUTSIDE
-`_pump_frames` entirely (an Artifacts-row selection handler,
+turn-end sweep family, the queue-view seed, the chrome-refresh guards) logged
+via `logger.exception` alone, with no counter bump and no audit-event, AT THE
+TIME #6224 landed. #6224 also added a call site OUTSIDE `_pump_frames`
+entirely (an Artifacts-row selection handler,
 `on_option_list_option_selected` — a message handler, not a pump frame,
 that previously left ZERO on-screen trace on failure) that routes through
-the SAME `_record_pump_swallow`/`PumpSwallowStats` — so `reyn.interfaces.
-inline.textual_chat.app.PumpSwallowStats.count` (folded into the status
-line via `chrome.status_line_text`'s `pump_swallow_count` param —
-`"frame pump: N swallowed — see log · "`, only when `N > 0`, never a
-transient toast, wording widened #6224 once a non-draw call site started
-feeding the same counter) is the complete read of everything that DOES
-route through it (5 call sites as of #6224), never a claim that every
-`_pump_frames` failure does.
+the SAME `_record_pump_swallow`/`PumpSwallowStats`.
+
+**#6234 (architect ruling, issuecomment-5772189312) closed that gap**: of
+`_pump_frames`'s 22 `except` blocks (2 `raise` after logging and are
+deliberately excluded — a re-raised exception is not "swallowed"), all 20
+remaining now route through `_record_pump_swallow`, plus the one call site
+outside the pump — 21 total. Doing so required widening the dedup key from
+`(kind, exception type)` to `(site, exception type)` (see the row below) —
+most of the newly-routed sites carry no frame at all, so a shared
+placeholder `kind` would have collapsed them into one dedup bucket. So
+`reyn.interfaces.inline.textual_chat.app.PumpSwallowStats.count` (folded
+into the status line via `chrome.status_line_text`'s `pump_swallow_count`
+param — `"frame pump: N swallowed — see log · "`, only when `N > 0`, never
+a transient toast, wording widened #6224 once a non-draw call site started
+feeding the same counter) is now the complete read of every `_pump_frames`
+`except Exception` block that does not itself re-raise (21 call sites as
+of #6234), not merely a partial one.
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `pump_exception_swallowed` | One of the (now 5, across and outside the pump — see above) `_record_pump_swallow` call sites caught an exception. Fires only on the FIRST time a given `(frame_kind, exception type)` pair is seen this process (`PumpSwallowStats.record`) — a broken call site fails on every frame, so a durable record per OCCURRENCE would flood `.reyn/events` with thousands of rows for one defect; the bounded count above already carries the complete tally (of the sites that route through it). Never carries the exception's own message or traceback — `logger.exception` (unchanged, already called at every one of those sites) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, matching `install_asyncio_exception_handler`'s own posture for `reyn chat` — a single-invocation, single-cwd CLI entrypoint, unlike a long-lived multi-project server): an emit failure here is logged and swallowed, never propagated into the pump. | `frame_kind` (the pump message's own `kind` — `__copy_last_reply__` \| `__rewind_list__` \| `__open_artifact__` \| the `_ingest_frame` frame's `kind` \| `__open_inline_artifact__`), `exception_type` (`type(exc).__name__`) |
+| `pump_exception_swallowed` | One of the (now 21, across and outside the pump — see above) `_record_pump_swallow` call sites caught an exception. Fires only on the FIRST time a given `(site, exception type)` pair is seen this process (`PumpSwallowStats.record`) — a broken call site fails on every frame, so a durable record per OCCURRENCE would flood `.reyn/events` with thousands of rows for one defect; the bounded count above already carries the complete tally (of the sites that route through it). #6234 (architect ruling, issuecomment-5772189312): the key used to be a pair of `frame_kind` and `exception type`, but most call sites have no frame at all (turn-end cleanup, the two chrome-refresh guards, the queue-view seed, every EVENT-frame handler) — keying on a shared placeholder for all of them would have collapsed distinct call sites into one dedup bucket. The key is now `(site, exception type)`, where `site` is a static literal naming the call site itself (AST-checked for pairwise distinctness, `scripts/check_pump_swallow_site_uniqueness.py`) and is present on every call site, unlike `frame_kind` (see the payload column). Never carries the exception's own message or traceback — `logger.exception` (unchanged, already called at every one of those sites) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, matching `install_asyncio_exception_handler`'s own posture for `reyn chat` — a single-invocation, single-cwd CLI entrypoint, unlike a long-lived multi-project server): an emit failure here is logged and swallowed, never propagated into the pump. | `site` (the static call-site literal — one of the 21 named in `TextualChatApp._record_pump_swallow`'s own docstring: the 3 CLIENT-consumed sentinel handlers, `_ingest_frame`, `__open_inline_artifact__`, one per EVENT-frame `etype` branch, one per turn-end cleanup step, and one per frame-unrelated guard), `exception_type` (`type(exc).__name__`), `frame_kind` (the pump message's own `kind` — `__copy_last_reply__` \| `__rewind_list__` \| `__open_artifact__` \| the `_ingest_frame` frame's `kind` \| `__open_inline_artifact__`; **absent** — the key is not present in the payload at all, never `""`/`"unknown"` — at every call site with no frame: the turn-end cleanup steps, the two chrome-refresh guards, the queue-view seed, and every EVENT-frame handler) |
 
 ## Call-parent registration
 
@@ -887,9 +896,9 @@ FIRST occurrence of a given `kind`, never per occurrence — a mis-routed
 producer emitting the same wrong kind on every frame must not flood
 `.reyn/events`), via a SIBLING stats class
 (`reyn.interfaces.repl.renderer.UnknownKindStats`) rather than a reuse of
-`PumpSwallowStats` — that class's own key is `(kind, exception type)`, and
-this event has no exception at all (the whole point of the stage: an
-unrecognized kind renders instead of raising).
+`PumpSwallowStats` — that class's own key is `(site, exception type)`
+(#6234), and this event has no exception at all (the whole point of the
+stage: an unrecognized kind renders instead of raising).
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
@@ -923,8 +932,8 @@ not flood `.reyn/events`), via a SIBLING stats class
 (`remote_client.ControlTimeoutCutStats`) keyed by `payload["type"]`
 alone — the exception is always `httpx.ReadTimeout` by construction
 here (the only except-clause branch that calls `record()`), so unlike
-`PumpSwallowStats`'s `(kind, exception type)` pair a second axis would
-name nothing new. The key domain itself is `BOUNDED_PAYLOAD_TYPES` — a
+`PumpSwallowStats`'s `(site, exception type)` pair (#6234) a second axis
+would name nothing new. The key domain itself is `BOUNDED_PAYLOAD_TYPES` — a
 small, FIXED frozenset — so the stats' own `counts` dict can never grow
 past that set's size, a stronger bound than a dedup key alone gives its
 siblings above.

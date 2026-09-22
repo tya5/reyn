@@ -7,7 +7,18 @@ Exception`` blocks (``/copy`` sentinel, ``/rewind`` sentinel,
 (unchanged) AND make the swallowed failure legible: a complete, public
 ``PumpSwallowStats.count``, a status-line segment once it is nonzero, and
 a bounded ``pump_exception_swallowed`` audit-event (one per first-seen
-``(frame_kind, exception type)`` pair, never one per occurrence).
+call-site/exception-type pair, never one per occurrence — #6234 widened
+the dedup key from ``(kind, exception type)`` to ``(site, exception
+type)``, ``site`` a static per-call-site literal (``PumpSwallowStats.
+record``'s own first parameter, renamed here too); see
+``test_6234_pump_swallow_site_key.py`` for that widening's own
+witnesses. The 8-point acceptance quoted below (``⑤``/``⑥``) is #5732's
+ORIGINAL wording, from before #6234 — it still describes the SHAPE
+(bounded-by-pair dedup, a different pair counts separately), but every
+test below that exercises it now passes ``site`` as the first argument,
+never a frame ``kind``; #6234 also made ``frame_kind`` an optional,
+often-ABSENT keyword-only argument, not a second positional value
+alongside ``kind``).
 
 The ``/copy`` sentinel (``__copy_last_reply__``) was NOT in the architect's
 own original 3-item enumeration below (nor lead-coder's brief) — e2e-coder
@@ -59,8 +70,9 @@ from reyn.runtime.outbox import OutboxMessage
 
 
 def test_record_returns_true_only_on_the_first_occurrence_of_a_pair() -> None:
-    """Tier 2: acceptance ⑤'s dedup-gate witness — the SAME (kind,
-    exception type) pair returns True once, then False on every further
+    """Tier 2: acceptance ⑤'s dedup-gate witness — the SAME (site,
+    exception type) pair (#6234: ``PumpSwallowStats.record``'s own first
+    parameter, ``site``) returns True once, then False on every further
     occurrence, regardless of how many times it recurs."""
     stats = PumpSwallowStats()
     first = stats.record("status", ValueError("boom"))
@@ -81,30 +93,35 @@ def test_count_grows_every_occurrence_even_while_dedup_gates_the_event() -> None
     assert stats.count == 5
 
 
-def test_a_different_exception_type_for_the_same_kind_is_a_separate_pair() -> None:
-    """Tier 2: acceptance ⑥ — (kind, exception type) is the KEY, not kind
-    alone. A second, DIFFERENT exception type for the same frame kind must
-    get its own first-occurrence True, not be folded into the first pair's
-    dedup."""
+def test_a_different_exception_type_for_the_same_site_is_a_separate_pair() -> None:
+    """Tier 2: acceptance ⑥ — (site, exception type) is the KEY (#6234:
+    was (kind, exception type) — ``site`` is the renamed, now
+    call-site-static first parameter), not site alone. A second,
+    DIFFERENT exception type for the same site must get its own
+    first-occurrence True, not be folded into the first pair's dedup."""
     stats = PumpSwallowStats()
     first = stats.record("status", ValueError("boom"))
     second = stats.record("status", AttributeError("different failure class"))
     assert first is True
     assert second is True, (
-        "a different exception TYPE for the same kind must not be treated "
+        "a different exception TYPE for the same site must not be treated "
         "as a repeat of the first pair"
     )
 
 
-def test_a_different_kind_for_the_same_exception_type_is_a_separate_pair() -> None:
-    """Tier 2: acceptance ⑥, the other axis — kind is also part of the key,
-    not just the exception type."""
+def test_a_different_site_for_the_same_exception_type_is_a_separate_pair() -> None:
+    """Tier 2: acceptance ⑥, the other axis — site is also part of the
+    key, not just the exception type (#6234: this used to be "kind is
+    also part of the key" — the same axis, renamed; see
+    ``test_6234_pump_swallow_site_key.py`` for the widened-key witness,
+    including the two DIFFERENT sites this file's #6234 sibling covers
+    that carry no frame at all)."""
     stats = PumpSwallowStats()
     first = stats.record("status", ValueError("boom"))
     second = stats.record("__open_artifact__", ValueError("boom"))
     assert first is True
     assert second is True, (
-        "a different frame kind with the same exception type must not be "
+        "a different site with the same exception type must not be "
         "treated as a repeat of the first pair"
     )
 
@@ -261,10 +278,13 @@ def test_record_pump_swallow_emits_a_real_event_with_no_parameter_collision(
     monkeypatch.chdir(tmp_path)
 
     app = TextualChatApp(transport=_StubTransport(), read_model=_StubReadModel())
-    app._record_pump_swallow("status", AttributeError("no attribute 'append'"))
+    app._record_pump_swallow(
+        "_ingest_frame", AttributeError("no attribute 'append'"), frame_kind="status",
+    )
 
     events = _read_events_of_kind(reyn_dir / "events", "pump_exception_swallowed")
     [event] = events
+    assert event["data"]["site"] == "_ingest_frame"
     assert event["data"]["frame_kind"] == "status"
     assert event["data"]["exception_type"] == "AttributeError"
 
@@ -272,10 +292,11 @@ def test_record_pump_swallow_emits_a_real_event_with_no_parameter_collision(
 def test_record_pump_swallow_emits_once_for_a_repeated_pair_but_keeps_counting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: acceptance ⑤ end to end — the SAME (kind, exception type)
-    failing repeatedly (the #5731 shape: a broken call site fails every
-    frame) durably records exactly ONE audit-event, while the public count
-    keeps growing."""
+    """Tier 2: acceptance ⑤ end to end — the SAME (site, exception type)
+    pair (#6234 rename; here ``site="_ingest_frame"``) failing repeatedly
+    (the #5731 shape: a broken call site fails every frame) durably
+    records exactly ONE audit-event, while the public count keeps
+    growing."""
     from reyn.interfaces.inline.textual_chat.app import TextualChatApp
 
     reyn_dir = tmp_path / ".reyn"
@@ -286,7 +307,9 @@ def test_record_pump_swallow_emits_once_for_a_repeated_pair_but_keeps_counting(
     stats = PumpSwallowStats()
     app._pump_swallow_stats = stats  # mirrors test_5168's own app._stray_output_stats wiring
     for _ in range(5):
-        app._record_pump_swallow("status", AttributeError("append"))
+        app._record_pump_swallow(
+            "_ingest_frame", AttributeError("append"), frame_kind="status",
+        )
 
     events = _read_events_of_kind(reyn_dir / "events", "pump_exception_swallowed")
     [event] = events  # exactly one event captured — unpack raises otherwise
@@ -297,8 +320,11 @@ def test_record_pump_swallow_emits_once_for_a_repeated_pair_but_keeps_counting(
 def test_record_pump_swallow_emits_separately_for_a_different_exception_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: acceptance ⑥ end to end — a second, different (kind,
-    exception type) pair gets its own durable event."""
+    """Tier 2: acceptance ⑥ end to end — the SAME site
+    (``"_ingest_frame"``), a second, DIFFERENT exception type, gets its
+    own durable event (#6234: the key is (site, exception type); see
+    ``test_6234_pump_swallow_site_key.py`` for the DIFFERENT-site half of
+    this same axis)."""
     from reyn.interfaces.inline.textual_chat.app import TextualChatApp
 
     reyn_dir = tmp_path / ".reyn"
@@ -306,8 +332,12 @@ def test_record_pump_swallow_emits_separately_for_a_different_exception_type(
     monkeypatch.chdir(tmp_path)
 
     app = TextualChatApp(transport=_StubTransport(), read_model=_StubReadModel())
-    app._record_pump_swallow("status", AttributeError("append"))
-    app._record_pump_swallow("status", ValueError("a different failure class"))
+    app._record_pump_swallow(
+        "_ingest_frame", AttributeError("append"), frame_kind="status",
+    )
+    app._record_pump_swallow(
+        "_ingest_frame", ValueError("a different failure class"), frame_kind="status",
+    )
 
     events = _read_events_of_kind(reyn_dir / "events", "pump_exception_swallowed")
     [event_a, event_b] = events  # exactly two events captured — unpack raises otherwise
