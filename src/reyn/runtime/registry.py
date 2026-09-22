@@ -2196,33 +2196,47 @@ class AgentRegistry:
         Best-effort per session, matching this method's own sibling prune
         steps: one session's failure never blocks another's.
 
-        #6077 提案 1: ``_gc_one_session_history``'s own
-        ``rewrite_history_dropping`` call always replaces
+        #6077 提案 1 (architect ruling, #6247 review): ``_gc_one_session_
+        history``'s own ``rewrite_history_dropping`` call always replaces
         ``history.jsonl``'s inode (``tmp.replace(path)`` is unconditional
-        once the file exists) — so if THIS ``(name, sid)`` has a live,
-        in-process ``Session`` (this registry's own ``self._sessions``
-        map, e.g. the attached agent still running its turn loop), that
-        session's cached append handle is invalidated right here, back on
-        THIS coroutine's own thread, immediately after the
-        ``asyncio.to_thread`` worker returns — never from inside the
-        worker thread itself, which would let the worker close a handle
-        the event-loop thread could be mid-``write()`` on. No-op (no live
-        session, or one that was never asked to append)."""
+        once the file exists) — Session now holds a session-lifetime
+        append handle onto that same path (see ``Session._history_append_
+        fh``'s own docstring), so rewriting a LIVE session's own
+        ``history.jsonl`` out from under it would strand that handle on a
+        detached inode: writes through it would keep succeeding at the OS
+        level but silently vanish from what any reader of the (new) path
+        ever sees again.
+
+        The class of defect this guards against is "one path, two
+        writers, no owner" — not a race to be narrowed, but a conflict to
+        remove: a ``(name, sid)`` this registry holds a live in-process
+        ``Session`` for (``self._sessions`` — checked via the same public
+        ``get_session`` accessor every other liveness read in this class
+        uses, never a second independently-derived truth) is skipped here
+        entirely. No live appender ⇒ no writer for GC to conflict with ⇒
+        nothing to invalidate. A NON-live session's ``history.jsonl`` (no
+        loaded ``Session``, i.e. GC's own worker thread is the file's only
+        writer) is unaffected and still gets GC'd exactly as before.
+
+        Known, deliberate scope-narrowing this introduces: a LIVE
+        session's ``history.jsonl`` is no longer GC'd AT ALL while it
+        stays live (a long-running agent's own history keeps growing
+        past what #5759 stage 2 would otherwise have trimmed) — the
+        live-session GC path is tracked separately (architect owns the
+        next-stage design); out of scope for THIS change, which is only
+        removing the conflict this method used to have with a held-open
+        append handle."""
         oldest_seq = self._oldest_kept_seq()
         if oldest_seq is None:
             return  # nothing has ever been truncated from the WAL yet
         for name in self.list_names():
             for sid in self._discover_session_ids(name):
+                if self.get_session(name, sid) is not None:
+                    continue  # live session: GC must never rewrite its history.jsonl (see docstring)
                 try:
                     await asyncio.to_thread(
                         self._gc_one_session_history, name, sid, oldest_seq,
                     )
-                    session = self.get_session(name, sid)
-                    invalidate = getattr(
-                        session, "_invalidate_history_append_handle", None,
-                    )
-                    if invalidate is not None:
-                        invalidate()
                 except Exception as e:  # noqa: BLE001 — defensive, matches sibling prune steps
                     logger.warning(
                         "history.jsonl GC failed for %r/%r: %s", name, sid, e,

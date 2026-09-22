@@ -1649,16 +1649,16 @@ class Session:
         # ``open``/``close``). Real-time AV on the owner's Windows machine
         # hooks file OPEN, not write/flush — 1 ``open`` per message meant 1
         # AV scan per message against a file measured at 547 MB (#6240).
-        # Owned and closed exactly ONE place each: opened lazily by
-        # ``_history_append_handle``, invalidated by
-        # ``_invalidate_history_append_handle`` (called from ``run()``'s
-        # own teardown ``finally`` — the session's one end-of-life point —
-        # and from ``Registry._gc_history_jsonl_below`` after a
-        # ``rewrite_history_dropping`` pass, since THAT atomically replaces
-        # ``history.jsonl``'s inode out from under any handle still open on
-        # the old one; #5759 stage 2 is the only other writer of this path
-        # and it owns invalidation of a live session's handle, never a
-        # second independent opener).
+        # Owned and closed in exactly ONE place each: opened lazily by
+        # ``_history_append_handle``, closed by
+        # ``_invalidate_history_append_handle`` from ``run()``'s own
+        # teardown ``finally`` — the session's one end-of-life point.
+        # ``Registry._gc_one_session_history`` (#5759 stage 2) is the only
+        # OTHER writer of this path, and it never touches a LIVE session's
+        # own ``history.jsonl`` at all (architect ruling, #6247 review —
+        # ``Registry._gc_history_jsonl_below``'s own liveness gate excludes
+        # any ``(name, sid)`` this registry holds a live ``Session`` for),
+        # so there is no second opener/invalidator to coordinate with here.
         self._history_append_fh: "Any" = None
         self.events_dir = (  # PR20: audit events dir, created lazily by EventStore on first write
             # #3705: anchored on the same root as workspace_dir — was a bare
@@ -4473,20 +4473,20 @@ class Session:
         lazily via :meth:`_history_append_handle` — against whatever inode
         currently sits at :attr:`history_path`.
 
-        Two callers, by design (one owner, one close site each purpose):
-
-        - ``run()``'s own teardown ``finally`` — the session's end-of-life
-          point; an un-invalidated handle leaking past it is a Windows file
-          lock (owner-hit failure mode named in #6077's own brief).
-        - ``Registry._gc_history_jsonl_below`` (#5759 stage 2), right after
-          it awaits ``_gc_one_session_history`` for THIS session's
-          ``(name, sid)`` — that path's own ``rewrite_history_dropping``
-          always replaces ``history.jsonl``'s inode (``tmp.replace(path)``
-          runs unconditionally once the file exists, regardless of how many
-          lines were actually dropped), so a handle opened before that
-          replace is left pointing at the now-detached old inode: writes
-          through it would keep succeeding at the OS level but vanish from
-          what any reader of the (new) path ever sees again.
+        ONE caller: ``run()``'s own teardown ``finally`` — the session's
+        end-of-life point; an un-invalidated handle leaking past it is a
+        Windows file lock (owner-hit failure mode named in #6077's own
+        brief). ``Registry._gc_one_session_history`` (#5759 stage 2) is
+        NOT a second caller (architect ruling, #6247 review): that path's
+        own ``rewrite_history_dropping`` always replaces ``history.jsonl``'s
+        inode when it runs (``tmp.replace(path)`` is unconditional once the
+        file exists), which WOULD strand a handle opened before the
+        replace — but ``Registry._gc_history_jsonl_below``'s own liveness
+        gate keeps that rewrite from ever reaching a ``(name, sid)`` this
+        registry holds a live ``Session`` for in the first place, so there
+        is nothing here to invalidate on the GC side. One path, one file,
+        one writer per liveness state — never two openers of the same
+        handle to coordinate.
 
         Best-effort close (mirrors every other teardown step in ``run()``'s
         own ``finally`` chain — a close failure must never block session
