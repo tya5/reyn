@@ -79,6 +79,7 @@ config_reload_rejected
 config_reloaded
 control_ir_failed
 control_ir_skipped
+control_post_bounded_timeout_cut
 cron_fired
 direct_alias_call_salvaged
 display_frame_unknown_kind
@@ -893,6 +894,44 @@ unrecognized kind renders instead of raising).
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
 | `display_frame_unknown_kind` | A renderer (`_ingest_frame` / `_render_display_message`) received a `kind` outside `DISPLAY_KINDS`. Fires only on the FIRST time a given `kind` is seen this process (`UnknownKindStats.record`). Best-effort (`emit_cli_event`, the same choice/posture `pump_exception_swallowed` made): an emit failure here is logged and swallowed, never propagated into rendering. | `frame_kind` (the unrecognized `kind` itself), `ui_surface` (`"textual_chat"` \| `"plain_cui"` — which renderer caught it; named `ui_surface`, not `surface`, because `emit_cli_event` already stamps its own `surface="cli"` on every event it emits, and a same-named payload key collides), `transport_kind` (`type(transport).__name__` — the nearest fact this layer has for "where it arrived from"; a remote PEER or client BUILD identifier would answer that more precisely but neither is obtainable at this layer, disclosed rather than fabricated), `detected_at` (`file:line` of the call site, captured dynamically via `inspect.stack()` so it can never drift from the code that actually classified the kind — the POSITION #6234's own dead-ended investigation lacked) |
+
+## Remote control-POST bounded timeout cut
+
+`reyn.interfaces.repl.remote_client` (`reyn chat --connect <url>`) splits
+every client→server control POST's own read timeout into two classes by
+`payload["type"]`: `BOUNDED_PAYLOAD_TYPES` (`_CONTROL_TIMEOUT_S`, #5894
+①-1) vs. `LONG_RUNNING_PAYLOAD_TYPES` (`read=None`, #6083 ⑵-a) — see
+`protocol.py`'s own module comment for how that classification is
+derived (a HUMAN trace into each `ptype`'s awaited callee, #6244 widened
+to also cover the shared PROLOGUE `await`s every branch after it runs
+through).
+
+That trace can only prove a `ptype` does not await an operation with
+genuinely unbounded duration. It CANNOT prove `_CONTROL_TIMEOUT_S` is
+enough headroom for the bounded operation a `ptype` DOES await — a
+payload correctly classified BOUNDED at review time can still turn out
+too slow in practice (a loaded server, a slow link), and that
+misclassification is invisible to any static check: it can only be
+observed at the moment a real POST actually gets cut, which reads
+exactly like a dead connection to everything downstream unless
+something durably marks it.
+
+The SAME bounded-by-key shape `pump_exception_swallowed` above
+established (one event per FIRST occurrence, never per occurrence — a
+persistently slow network cutting the SAME `ptype` on every retry must
+not flood `.reyn/events`), via a SIBLING stats class
+(`remote_client.ControlTimeoutCutStats`) keyed by `payload["type"]`
+alone — the exception is always `httpx.ReadTimeout` by construction
+here (the only except-clause branch that calls `record()`), so unlike
+`PumpSwallowStats`'s `(kind, exception type)` pair a second axis would
+name nothing new. The key domain itself is `BOUNDED_PAYLOAD_TYPES` — a
+small, FIXED frozenset — so the stats' own `counts` dict can never grow
+past that set's size, a stronger bound than a dedup key alone gives its
+siblings above.
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `control_post_bounded_timeout_cut` | `remote_client.post_control` caught `httpx.ReadTimeout` for a `payload["type"]` in `BOUNDED_PAYLOAD_TYPES` — a `LONG_RUNNING_PAYLOAD_TYPES` payload reads `read=None` and structurally cannot raise this, so the membership check is what keeps this from ever firing for that class. Fires only on the FIRST time a given `payload_type` is cut this process (`ControlTimeoutCutStats.record`, module-level `remote_client._CONTROL_TIMEOUT_CUT_STATS`) — the always-complete per-`ptype` count stays available via `ControlTimeoutCutStats.counts` for an operator or test that needs the tally. Never carries the exception's own message or traceback — `post_control`'s existing `logger.warning` call (unchanged) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, the same choice/posture `pump_exception_swallowed` made): an emit failure here is logged and swallowed, never propagated into the POST path. | `payload_type` (the `ptype` that was cut), `timeout_seconds` (the read timeout that was actually in force — `_CONTROL_TIMEOUT_S`, or a test-injected override) |
 
 ## Replay
 

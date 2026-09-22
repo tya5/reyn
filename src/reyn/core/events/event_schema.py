@@ -563,6 +563,16 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "config_reloaded",
     "control_ir_failed",
     "control_ir_skipped",
+    # #6241 ⑤: a `--connect` client's control POST (`remote_client.
+    # post_control`) raised `httpx.ReadTimeout` for a `payload["type"]`
+    # classified BOUNDED (`BOUNDED_PAYLOAD_TYPES`, protocol.py). #6083's
+    # human trace / #6244's AST-derived population can only confirm a
+    # ptype does not AWAIT an unbounded operation -- neither can prove
+    # `_CONTROL_TIMEOUT_S` is enough headroom for the bounded one it DOES
+    # await, and that misclassification shows up only at runtime. See
+    # `remote_client.ControlTimeoutCutStats`/`_record_control_timeout_
+    # cut` for the bounded (warn-once-per-ptype) firing shape.
+    "control_post_bounded_timeout_cut",
     "cron_fired",
     "direct_alias_call_salvaged",
     # #6230 stage 2: a display-frame `kind` outside the closed display
