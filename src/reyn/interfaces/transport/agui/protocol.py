@@ -89,7 +89,7 @@ from dataclasses import dataclass, field
 
 from reyn.core.events.events import Event
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
-from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage, legible_degrade_text
 
 # ── AG-UI event type names (hand-rolled; the SDK is not a dependency) ─────────
 TEXT_MESSAGE_START = "TEXT_MESSAGE_START"
@@ -395,6 +395,27 @@ def _encode_display(frame: DisplayFrame) -> AgUiEvent:
     wire = msg.to_wire_dict()
     kind, text = str(wire["kind"]), str(wire["text"])
     ag_type = _display_event_type(kind)
+    # #6230 stage 2 item 3 (architect ruling, PR #6238 review): the CUSTOM
+    # branch below is the ONLY one a generic client renders from `text`
+    # alone (reyn-private kinds — presentation/trace/intervention/control
+    # sentinels — have no OTHER standard field a foreign client could fall
+    # back to). A STANDARD-mapped kind's (agent/status/reasoning/error)
+    # empty `text` is a LEGITIMATE state, not an unreadable frame —
+    # `router_loop.py`'s own terminal `text=result.content or ""` emission
+    # (a real empty reply) and the dedicated `router_empty_response` path
+    # both produce it on purpose (architect's own citation; not
+    # independently re-verified in this PR beyond confirming the literal
+    # `result.content or ""` call sites exist). Filling THAT branch would
+    # fabricate visible content for a genuinely empty reply — the opposite
+    # of degrading an unreadable frame. So the guarantee is scoped to
+    # exactly the population it exists for: named by branch (``is_reyn_
+    # private_custom``), never a bare ``if not text:`` that cannot tell
+    # the two empties apart (this arc's own repeated finding — #6184's
+    # "absence and emptiness must not share one value" applies here too).
+    is_reyn_private_custom = ag_type is CUSTOM
+    if is_reyn_private_custom and not text:
+        text = legible_degrade_text(kind, text)
+        wire["text"] = text
     reyn = {"frame": "display", **wire}
     # Standard AG-UI surface a generic client renders (best-effort).
     if ag_type is TEXT_MESSAGE_CONTENT:

@@ -1,19 +1,133 @@
 """Pluggable chat UI backends for reyn chat."""
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import sys
 import time
+from dataclasses import dataclass, field
 from io import StringIO
 
 from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 
 from reyn.interfaces import palette
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.outbox import OutboxMessage, legible_degrade_text
+from reyn.runtime.outbox import is_unknown_kind as is_unknown_kind  # noqa: F401 — re-export, see below
+
+# `is_unknown_kind` / `legible_degrade_text` (#6230 stage 2) are DEFINED in
+# `reyn.runtime.outbox`, not here — that module is the shared runtime layer
+# both this presentation-layer module AND the wire codec
+# (`interfaces/transport/agui/protocol.py`) already depend on, so a pure
+# vocabulary function belongs there rather than being duplicated (PR #6238
+# review, architect + lead-coder). Imported here (not just used internally)
+# so every existing `from reyn.interfaces.repl.renderer import ...` call
+# site in this codebase (`app.py`, `stream_client.py`) keeps working
+# unchanged.
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass
+class UnknownKindStats:
+    """#6230 stage 2: the witness that a ``kind`` outside
+    :data:`~reyn.runtime.outbox.DISPLAY_KINDS` reached a renderer — kept
+    alive precisely so the degrade in :func:`legible_degrade_text` cannot
+    make a future routing defect invisible the way #6234's own dead-ended
+    investigation was.
+
+    Deliberately a SIBLING of ``textual_chat.app.PumpSwallowStats``, not a
+    reuse of it: that class's ``record(kind, exc: BaseException)`` is keyed
+    on an actual caught exception, and this event has none BY DESIGN — the
+    whole point of stage 1+2 is that an unrecognized kind renders instead
+    of raising. Forcing a fake ``exc`` through the existing method to reuse
+    its shape would fabricate a field this event does not have (CLAUDE.md:
+    no unjustified/fabricated fields). Same "always-complete count,
+    first-occurrence-only audit-event" shape as ``PumpSwallowStats``
+    though — one bounded, discoverable record per DISTINCT kind, not one
+    per occurrence (a mis-routed producer emitting the same wrong kind on
+    every frame must not flood ``.reyn/events``)."""
+
+    count: int = 0
+    _seen: "set[str]" = field(default_factory=set)
+
+    def record(self, kind: str) -> bool:
+        """Record one unknown-kind frame. Returns True iff this ``kind``
+        has never been recorded before on this instance — first
+        occurrence only, the caller's own signal to emit the bounded
+        audit-event; ``count`` still increments on a repeat."""
+        self.count += 1
+        if kind in self._seen:
+            return False
+        self._seen.add(kind)
+        return True
+
+
+def record_unknown_kind_frame(
+    stats: UnknownKindStats, kind: str, *, ui_surface: str, transport_kind: str
+) -> None:
+    """First-occurrence-only ``display_frame_unknown_kind`` audit-event for
+    an unrecognized ``kind`` (#6230 stage 2, item 3 of the issue thread's
+    acceptance list — "the record must carry (1) where it arrived from
+    (2) where it failed").
+
+    What this can and cannot honestly fill in, disclosed here (not only in
+    the PR — the instruction that produced the #6234 dead-end):
+
+    - **frame_kind**: the ``kind`` string itself. Always obtainable.
+    - **ui_surface**: which renderer caught it (``"textual_chat"`` /
+      ``"plain_cui"``) — the caller's own identity, always obtainable.
+      Named ``ui_surface``, not ``surface`` — ``emit_cli_event`` already
+      stamps its OWN ``surface="cli"`` on every event it emits
+      (``core/events/events.py``); passing this field under that same
+      name collides exactly the way ``_record_pump_swallow``'s own
+      ``kind``/``frame_kind`` split was forced to avoid (#5732's own
+      documented ``TypeError: ... multiple values for argument`` —
+      reproduced here for real by an early draft of this function's own
+      test, not merely reasoned about).
+    - **transport_kind**: ``type(transport).__name__`` — obtainable at
+      every call site today (both callers hold a live transport
+      reference). This is "where it arrived from" for (1) — the nearest
+      fact this layer genuinely has. A remote PEER identifier or a
+      client BUILD identifier would answer (1) more precisely, but
+      neither is obtainable at this layer: peer identity lives at the
+      wire layer (``transport/agui/endpoint.py``'s connection handling),
+      several layers below a renderer that only ever sees a decoded
+      ``OutboxMessage``, and no build/version identifier is threaded
+      onto a frame anywhere in this codebase today (grep-confirmed
+      against ``OutboxMessage``'s own fields). Plumbing either through
+      is out of THIS stage's scope — stated here rather than fabricated.
+    - **detected_at**: ``file:line`` of the call site that decided this
+      ``kind`` was unrecognized, captured dynamically via
+      :func:`inspect.stack` so it can never drift from the code that
+      actually classified it (a hardcoded string would). This is (2) —
+      "where it failed" reinterpreted honestly: nothing RAISES on this
+      path any more (that is the entire point of stage 1+2), so there is
+      no exception frame to point at; the position recorded is instead
+      where the classification itself happened, which is the file a
+      future investigator needs to open first.
+    """
+    if not stats.record(kind):
+        return
+    caller = inspect.stack()[1]
+    detected_at = f"{caller.filename}:{caller.lineno}"
+    try:
+        from reyn.core.events.events import emit_cli_event
+
+        emit_cli_event(
+            "display_frame_unknown_kind",
+            frame_kind=kind,
+            ui_surface=ui_surface,
+            transport_kind=transport_kind,
+            detected_at=detected_at,
+        )
+    except Exception:
+        _log.exception(
+            "renderer: failed to emit display_frame_unknown_kind for "
+            "kind=%r (diagnostic-only, never blocks rendering)",
+            kind,
+        )
 
 
 def _meta_prefix(meta: dict) -> str:
@@ -238,7 +352,11 @@ class ConsoleChatRenderer(ChatRenderer):
             return
         kind_prefix = self._PREFIX.get(msg.kind, "")
         meta_prefix = _meta_prefix(msg.meta)
-        body_text = msg.text
+        # #6230 stage 2 item 1: this plain renderer used to write `msg.text`
+        # RAW — an unrecognized kind with empty text (e.g. a decode-skewed
+        # or genuinely foreign wire kind) wrote nothing but a blank line.
+        # `legible_degrade_text` guarantees a real, non-blank line instead.
+        body_text = legible_degrade_text(msg.kind, msg.text)
         if self._neutralize_body:
             # #3318: this method writes body_text to the terminal RAW (no
             # markdown/`_body_renderable` pass — this renderer has its own
@@ -326,7 +444,12 @@ class RichChatRenderer(ChatRenderer):
         # that fallback (issue #2655).
         c.width = _live_terminal_width()
         kind = msg.kind
-        text = f"{_meta_prefix(msg.meta)}{msg.text}"
+        # #6230 stage 2 item 1: same structural guarantee as
+        # ConsoleChatRenderer.message() above — an unrecognized kind (or any
+        # kind whose producer left `text` empty) still prints a real line,
+        # never a blank one (the `else` branch below is exactly the
+        # "no per-kind styling" fallback an unknown kind takes).
+        text = f"{_meta_prefix(msg.meta)}{legible_degrade_text(kind, msg.text)}"
         if kind == "agent":
             from rich.text import Text
             rendered = Text.assemble(("agent  ", "bold cyan"), (text, ""))

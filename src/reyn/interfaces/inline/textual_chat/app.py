@@ -63,7 +63,10 @@ from reyn.interfaces.repl._clipboard import (
 from reyn.interfaces.repl._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
 from reyn.interfaces.repl.renderer import (
     _CC_DIM,
+    UnknownKindStats,
     chat_markdown_theme,
+    is_unknown_kind,
+    record_unknown_kind_frame,
     summarize_tool_result,
 )
 from reyn.interfaces.transport.agui.state import RemoteQueueView
@@ -1475,6 +1478,13 @@ class TextualChatApp(App):
         # run_textual_chat's own capture window), this pump ALWAYS runs
         # for every App instance — always constructed, never None.
         self._pump_swallow_stats = PumpSwallowStats()
+        # #6230 stage 2: a SIBLING to `_pump_swallow_stats` above — bounds
+        # the `display_frame_unknown_kind` audit-event (see
+        # `_ingest_frame`'s own call site and `renderer.
+        # record_unknown_kind_frame`'s docstring for why this is a sibling,
+        # not a reuse of `PumpSwallowStats`). Always constructed, same
+        # "every App instance always has one" shape.
+        self._unknown_kind_stats = UnknownKindStats()
         # #6198: bounds :meth:`_record_call_parent_collision`'s own
         # audit-event emission to one per DISTINCT call_id — process-
         # lifetime, not per-session (see that method's own docstring for
@@ -5930,8 +5940,26 @@ class TextualChatApp(App):
         row, that screen is the evidence to redesign against — not a
         speculative comparison rule kept alive for a symptom nobody has
         observed.
+
+        #6230 stage 2 (item 2/3 of the issue thread's acceptance list):
+        FIRST, before any of the folding/routing logic below, record a
+        ``kind`` outside the closed display vocabulary — the witness the
+        stage 1+2 degrade must not remove (the #6234 investigation that
+        motivated this arc dead-ended on a record that HAD an exception
+        type but no position; see :func:`~reyn.interfaces.repl.renderer.
+        record_unknown_kind_frame`'s own docstring for exactly what this
+        can and cannot honestly fill in). This never raises and never
+        skips the fold below — an unrecognized kind still gets folded and
+        rendered via the generic fallback exactly as before, just with a
+        durable, bounded record of the fact.
         """
         kind = msg.kind
+        if is_unknown_kind(kind):
+            record_unknown_kind_frame(
+                self._unknown_kind_stats, kind,
+                ui_surface="textual_chat",
+                transport_kind=type(self._transport).__name__,
+            )
         meta = msg.meta or {}
         # A pipeline's step frames fold into ONE row, keyed by the run. A
         # 15-step run emits 30 of them (a started/completed pair per step), and
