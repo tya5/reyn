@@ -22,9 +22,13 @@ import os
 import sys
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import AsyncIterator
 
-from reyn.interfaces.transport.agui.protocol import LONG_RUNNING_PAYLOAD_TYPES
+from reyn.interfaces.transport.agui.protocol import (
+    BOUNDED_PAYLOAD_TYPES,
+    LONG_RUNNING_PAYLOAD_TYPES,
+)
 from reyn.interfaces.transport.control_outcome import ControlOutcome
 
 logger = logging.getLogger(__name__)
@@ -103,6 +107,108 @@ def _read_timeout_for(ptype: "object", *, override: "float | None" = None) -> "f
     return _CONTROL_TIMEOUT_S if override is None else override
 
 
+@dataclass
+class ControlTimeoutCutStats:
+    """#6241 ⑤: the process-lifetime witness that a BOUNDED control POST
+    (a ``payload["type"]`` in :data:`~reyn.interfaces.transport.agui.
+    protocol.BOUNDED_PAYLOAD_TYPES`) was actually CUT by
+    :data:`_CONTROL_TIMEOUT_S` — the one failure mode no static check can
+    see. #6083's own human trace into each branch's awaited callee (and
+    #6244's AST-derived population of that trace) can only confirm a
+    ``ptype`` does not await an UNBOUNDED operation; it cannot prove
+    ``_CONTROL_TIMEOUT_S`` is enough headroom for the BOUNDED one it
+    does await. A classification that is wrong in that second way is
+    silent by construction (a timed-out POST reads exactly like a dead
+    connection to everything downstream) unless something durably marks
+    the moment it happens.
+
+    Keyed by ``payload["type"]`` alone — unlike
+    :class:`~reyn.interfaces.inline.textual_chat.app.PumpSwallowStats`'s
+    ``(kind, exception type)`` pair, the exception type here is always
+    ``httpx.ReadTimeout`` by construction (:meth:`record` is only ever
+    called from that except-clause branch of :func:`post_control`), so a
+    second axis would name nothing new. The key domain itself
+    (``BOUNDED_PAYLOAD_TYPES``) is a small, FIXED frozenset declared in
+    ``protocol.py`` — so unlike that sibling's open-ended ``(kind, exc
+    type)`` domain, ``counts`` can never grow past that set's own size;
+    it is bounded by the vocabulary, not merely by a dedup key.
+
+    ``counts[ptype]`` is the TOTAL cuts observed for that type this
+    process, always complete. :meth:`record`'s own return value is the
+    SEPARATE bound the caller's audit-event honors: True only the FIRST
+    time a given ``ptype`` is cut this process — a connection pinned on a
+    slow network must not flood ``.reyn/events`` with one row per retry.
+    """
+
+    counts: "dict[str, int]" = field(default_factory=dict)
+
+    def record(self, ptype: str) -> bool:
+        """Record one timeout-cut occurrence for *ptype*. Returns True
+        iff this exact ``ptype`` has never been recorded before on this
+        instance — the caller's own signal to emit the bounded,
+        first-occurrence-only audit-event. ``counts[ptype]`` still
+        increments on a repeat."""
+        first = ptype not in self.counts
+        self.counts[ptype] = self.counts.get(ptype, 0) + 1
+        return first
+
+
+#: #6241 ⑤: process-lifetime default — mirrors ``PumpSwallowStats``'s own
+#: "always constructed, never None, one per App instance" shape one level
+#: up: the nearest equivalent of "one App instance" for a plain module of
+#: async functions (no long-lived object ``post_control`` is a method of)
+#: is "one process running ``reyn chat --connect``". A test that needs
+#: isolation swaps this module attribute for a fresh instance via
+#: ``monkeypatch.setattr`` rather than threading a new parameter through
+#: ``post_control``'s already-widely-called signature.
+_CONTROL_TIMEOUT_CUT_STATS = ControlTimeoutCutStats()
+
+
+def _record_control_timeout_cut(ptype: str, read_timeout: "float | None") -> None:
+    """#6241 ⑤: warn-once witness that ``ptype``'s BOUNDED classification
+    just cut a real control POST — fires only from :func:`post_control`'s
+    own ``httpx.ReadTimeout`` branch, and only when ``ptype`` is in
+    :data:`~reyn.interfaces.transport.agui.protocol.BOUNDED_PAYLOAD_
+    TYPES` (a payload in ``LONG_RUNNING_PAYLOAD_TYPES`` reads
+    ``read=None`` and structurally cannot raise this).
+
+    Fires only the FIRST time THIS ``ptype`` is cut this process
+    (:meth:`ControlTimeoutCutStats.record` on the module-level
+    :data:`_CONTROL_TIMEOUT_CUT_STATS` — bounded-by-key, the SAME shape
+    ``pump_exception_swallowed`` established: a slow network cuts the
+    SAME ptype on every retry, so a durable record per OCCURRENCE would
+    flood ``.reyn/events``; the always-complete per-ptype count stays
+    available via ``ControlTimeoutCutStats.counts``, readable from a
+    test or a debugger — there is no operator-facing surface that reads
+    it today (no status line, no log line, no command). The audit-event
+    this function emits, landing in ``.reyn/events``, is the ONLY
+    operator-facing side of this mechanism; ``counts`` itself does not
+    reach one).
+
+    Never carries the exception's own message or traceback (the SAME
+    posture ``pump_exception_swallowed``'s own doc row states verbatim)
+    — :func:`post_control`'s existing ``logger.warning`` call (unchanged)
+    already covers the free-text half; this event carries only the
+    structured facts a post-mortem reader queries by.
+    """
+    if not _CONTROL_TIMEOUT_CUT_STATS.record(ptype):
+        return
+    try:
+        from reyn.core.events.events import emit_cli_event
+
+        emit_cli_event(
+            "control_post_bounded_timeout_cut",
+            payload_type=ptype,
+            timeout_seconds=read_timeout,
+        )
+    except Exception:  # noqa: BLE001 — diagnostic-only, must not break the POST path
+        logger.exception(
+            "remote_client: failed to emit control_post_bounded_timeout_cut "
+            "for payload_type=%r (diagnostic-only, does not block the POST)",
+            ptype,
+        )
+
+
 async def post_control(
     client, url: str, *, params: dict, payload: dict,
     timeout_s: "float | None" = None,
@@ -137,7 +243,18 @@ async def post_control(
             timeout=httpx.Timeout(read_timeout, connect=10.0),
         )
     except Exception as exc:  # noqa: BLE001 — a transport error is a non-delivery
-        logger.warning("remote send failed for %r: %s", payload.get("type"), type(exc).__name__)
+        ptype = payload.get("type")
+        # #6241 ⑤: a `ReadTimeout` on a `ptype` classified BOUNDED is the
+        # ONE failure mode #6083/#6244's static trace cannot see (that
+        # classification is a correctness claim about the SERVER side's
+        # awaited callee, not a claim `_CONTROL_TIMEOUT_S` is enough
+        # headroom) — durably mark it rather than let it read identically
+        # to a dead connection. `LONG_RUNNING_PAYLOAD_TYPES` reads
+        # `read=None` and cannot raise this, so the membership check is
+        # what keeps this from firing for that class.
+        if isinstance(exc, httpx.ReadTimeout) and ptype in BOUNDED_PAYLOAD_TYPES:
+            _record_control_timeout_cut(ptype, read_timeout)
+        logger.warning("remote send failed for %r: %s", ptype, type(exc).__name__)
         return ControlOutcome.not_delivered(type(exc).__name__, read_timeout)
     if resp.status_code >= 300:
         reason: "str | None"
