@@ -7,7 +7,10 @@ Exception`` blocks (``/copy`` sentinel, ``/rewind`` sentinel,
 (unchanged) AND make the swallowed failure legible: a complete, public
 ``PumpSwallowStats.count``, a status-line segment once it is nonzero, and
 a bounded ``pump_exception_swallowed`` audit-event (one per first-seen
-``(frame_kind, exception type)`` pair, never one per occurrence).
+call-site/exception-type pair, never one per occurrence — #6234 widened
+the dedup key from ``(kind, exception type)`` to ``(site, exception
+type)``, ``site`` a static per-call-site literal; see
+``test_6234_pump_swallow_site.py`` for that widening's own witnesses).
 
 The ``/copy`` sentinel (``__copy_last_reply__``) was NOT in the architect's
 own original 3-item enumeration below (nor lead-coder's brief) — e2e-coder
@@ -261,10 +264,13 @@ def test_record_pump_swallow_emits_a_real_event_with_no_parameter_collision(
     monkeypatch.chdir(tmp_path)
 
     app = TextualChatApp(transport=_StubTransport(), read_model=_StubReadModel())
-    app._record_pump_swallow("status", AttributeError("no attribute 'append'"))
+    app._record_pump_swallow(
+        "_ingest_frame", AttributeError("no attribute 'append'"), frame_kind="status",
+    )
 
     events = _read_events_of_kind(reyn_dir / "events", "pump_exception_swallowed")
     [event] = events
+    assert event["data"]["site"] == "_ingest_frame"
     assert event["data"]["frame_kind"] == "status"
     assert event["data"]["exception_type"] == "AttributeError"
 
@@ -286,7 +292,9 @@ def test_record_pump_swallow_emits_once_for_a_repeated_pair_but_keeps_counting(
     stats = PumpSwallowStats()
     app._pump_swallow_stats = stats  # mirrors test_5168's own app._stray_output_stats wiring
     for _ in range(5):
-        app._record_pump_swallow("status", AttributeError("append"))
+        app._record_pump_swallow(
+            "_ingest_frame", AttributeError("append"), frame_kind="status",
+        )
 
     events = _read_events_of_kind(reyn_dir / "events", "pump_exception_swallowed")
     [event] = events  # exactly one event captured — unpack raises otherwise
@@ -306,8 +314,12 @@ def test_record_pump_swallow_emits_separately_for_a_different_exception_type(
     monkeypatch.chdir(tmp_path)
 
     app = TextualChatApp(transport=_StubTransport(), read_model=_StubReadModel())
-    app._record_pump_swallow("status", AttributeError("append"))
-    app._record_pump_swallow("status", ValueError("a different failure class"))
+    app._record_pump_swallow(
+        "_ingest_frame", AttributeError("append"), frame_kind="status",
+    )
+    app._record_pump_swallow(
+        "_ingest_frame", ValueError("a different failure class"), frame_kind="status",
+    )
 
     events = _read_events_of_kind(reyn_dir / "events", "pump_exception_swallowed")
     [event_a, event_b] = events  # exactly two events captured — unpack raises otherwise

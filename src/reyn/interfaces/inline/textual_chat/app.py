@@ -192,7 +192,7 @@ class PumpSwallowStats:
     number, prepended to the always-visible status line, never a
     per-occurrence toast" precedent #5168 already established.
 
-    ``count`` is the TOTAL swallowed occurrences across every kind and
+    ``count`` is the TOTAL swallowed occurrences across every call site and
     exception type — the number an operator sees ("N frames failed to
     draw"), always complete regardless of how many distinct call sites
     are broken. ``record`` ALSO gates a separate, bounded concern: a
@@ -201,22 +201,40 @@ class PumpSwallowStats:
     turn a single defect into thousands of durable records (charter Q1
     — "who stops this if it repeats" — nobody, if nothing bounds it).
     ``record``'s own return value is that bound: True only the FIRST
-    time a given ``(kind, exception type)`` pair is seen, so the caller
+    time a given ``(site, exception type)`` pair is seen, so the caller
     emits an audit-event on that transition alone. The COUNT still
     reflects every occurrence — only the EVENT population is bounded,
-    never the number an operator or a test reads."""
+    never the number an operator or a test reads.
+
+    #6234 (architect ruling, issuecomment-5772189312): the key used to be
+    ``(kind, exception type)``, where ``kind`` doubled as BOTH the call
+    site's own identity AND (for the 4 display-frame sites) the actual
+    frame's ``kind`` value. Widening this counter to the other 18
+    ``_pump_frames`` ``except`` blocks (turn-end cleanup, the two
+    chrome-refresh guards, the queue-view seed, every EVENT-frame
+    handler) exposed the collision the OLD key was hiding: most of those
+    blocks have no frame at all, so they have no ``kind`` to pass, and
+    keying on a placeholder (``""``/``"unknown"``) would have collapsed
+    every one of them into ONE shared bucket — the first site to fire
+    would have silently suppressed the audit-event for every OTHER site
+    sharing that placeholder. The key is now ``(site, exception type)``,
+    where ``site`` is a STATIC literal naming the call site itself
+    (never a frame's ``kind`` — see :meth:`TextualChatApp.
+    _record_pump_swallow` for the full site inventory and the separate,
+    now-optional ``frame_kind`` this counter's own key no longer uses)."""
 
     count: int = 0
     _seen: "set[tuple[str, str]]" = field(default_factory=set)
 
-    def record(self, kind: str, exc: BaseException) -> bool:
-        """Record one swallowed exception for *kind*. Returns True iff
-        this exact ``(kind, type(exc).__name__)`` pair has never been
+    def record(self, site: str, exc: BaseException) -> bool:
+        """Record one swallowed exception for *site*. Returns True iff
+        this exact ``(site, type(exc).__name__)`` pair has never been
         recorded before — the caller's own signal to emit the bounded,
         once-per-pair audit-event; a repeat of an already-seen pair
-        still increments :attr:`count` but returns False."""
+        still increments :attr:`count` but returns False. *site* is a
+        static call-site literal (#6234), never a frame's ``kind``."""
         self.count += 1
-        key = (kind, type(exc).__name__)
+        key = (site, type(exc).__name__)
         if key in self._seen:
             return False
         self._seen.add(key)
@@ -4306,7 +4324,11 @@ class TextualChatApp(App):
                         logger.exception(
                             "textual chat: inline artifact open failed"
                         )
-                        self._record_pump_swallow("__open_inline_artifact__", exc)
+                        self._record_pump_swallow(
+                            "__open_inline_artifact__",
+                            exc,
+                            frame_kind="__open_inline_artifact__",
+                        )
                     self._open_drawer(None)
                     return
         cmds = self._pane_commands.get(tab_id or "", [])
@@ -5862,40 +5884,82 @@ class TextualChatApp(App):
                 call_id,
             )
 
-    def _record_pump_swallow(self, kind: str, exc: BaseException) -> None:
-        """#5732 (corrected #6224 — see below): bumps :attr:`_pump_swallow_
-        stats` (the always-complete count) and, only on the first time
-        THIS ``(kind, exception type)`` pair is seen, durably records a
-        ``pump_exception_swallowed`` audit-event (architect ruling: bounded
-        by the pair, never by the occurrence — a broken call site fails
-        every frame, so 1-event-per-occurrence would flood ``.reyn/events``
-        with thousands of records for a single defect).
+    def _record_pump_swallow(
+        self, site: str, exc: BaseException, *, frame_kind: str | None = None,
+    ) -> None:
+        """#5732 (corrected #6224, widened #6234 — see below): bumps
+        :attr:`_pump_swallow_stats` (the always-complete count) and, only
+        on the first time THIS ``(site, exception type)`` pair is seen,
+        durably records a ``pump_exception_swallowed`` audit-event
+        (architect ruling: bounded by the pair, never by the occurrence —
+        a broken call site fails every frame, so 1-event-per-occurrence
+        would flood ``.reyn/events`` with thousands of records for a
+        single defect).
 
-        #6224 correction: this docstring used to claim this is "the ONE
-        call site every ``except Exception`` block in :meth:`_pump_frames`
-        routes through" — that was false the whole time it stood (architect
-        count, #6224 review): of that method's own ~20 ``except Exception``
-        blocks, only 4 route through this method — the three CLIENT-
-        consumed sentinel handlers (``__copy_last_reply__``/
-        ``__rewind_list__``/``__open_artifact__``) and the generic
-        display-frame path (``_ingest_frame`` for any ``kind`` not caught
-        above). Every EVENT-frame handler (``session_attached``,
-        ``user_submitted``, ``turn_started``, ``inbox_cancel``,
-        ``intervention_answer_submitted``, ``session_halted``,
-        ``agent_delta``), the turn-end sweep family (activity-row clear,
-        the 3 orphan sweeps, turn-parent settle), the queue-view seed, and
-        the two chrome-refresh guards log via ``logger.exception`` ALONE —
-        no counter bump, no audit-event, nothing an operator sees on
-        screen. That gap is real, not closed by this docstring fix, and is
-        tracked separately (out of THIS method's own scope) rather than
-        papered over here with a promise this change does not keep. #6224
-        also added a call site OUTSIDE ``_pump_frames`` entirely — an
-        Artifacts-row selection handler (see
-        :meth:`TextualChatApp.on_option_list_option_selected`) — so "the
-        ONE call site" was never accurate even in the narrower "inside the
-        pump" sense once that landed; this method's own ``kind`` label is
-        just a stats/audit-event key, with no dependency on being called
-        from inside the pump's frame loop.
+        #6234 (architect ruling, issuecomment-5772189312): *site* is a
+        STATIC literal naming the call site — never a frame's ``kind``.
+        Before this change the first positional argument was named
+        ``kind`` and did double duty as both the dedup/identity key AND
+        (for the 4 display-frame sites, inside the pump) the actual
+        frame's ``kind`` value. Widening this method's call sites from 5
+        to 21 (see below) exposed why that overload does not scale: 16
+        of the 21 routed sites (every EVENT-frame handler, all 5
+        turn-end cleanup steps, the two chrome-refresh guards, the
+        queue-view seed) have NO frame at all, so they have no ``kind``
+        to pass — keying on a shared placeholder for all of them would
+        collapse those 16 distinct call sites into ONE dedup bucket, and
+        the first one to fire would permanently suppress the
+        audit-event for every other one sharing that bucket (fail-open:
+        the counter looks bounded while it is actually blind to 15 of
+        the 16). *frame_kind* is the separate, now-optional field that
+        carries the actual frame's ``kind`` — populated ONLY at the 5
+        sites where a frame genuinely has one (the display-frame sites,
+        inside and outside the pump); every other site passes nothing
+        for it, and it is OMITTED from the audit-event payload entirely
+        rather than filled with ``""``/``"unknown"`` (architect ruling:
+        never represent "no frame here" with the same value a real,
+        empty frame kind could produce).
+
+        #6234 site inventory — 21 ``_record_pump_swallow`` call sites (of
+        23 total ``except`` blocks across :meth:`_pump_frames` and the one
+        outside it; 2 ``raise`` and are deliberately NOT routed through
+        this method — see the last bullet below), all with static
+        ``site`` literals whose mutual distinctness is AST-checked by
+        ``scripts/check_pump_swallow_site_uniqueness.py``:
+
+        - DISPLAY-frame sites (``frame_kind`` populated, 5 total): the 3
+          CLIENT-consumed sentinel handlers (``__copy_last_reply__``/
+          ``__rewind_list__``/``__open_artifact__``), the generic
+          display-frame path (``_ingest_frame``, site
+          ``"_ingest_frame"``, ``frame_kind`` = the actual ``msg.kind``
+          that failed), and the one call site OUTSIDE :meth:`_pump_
+          frames` entirely (the Artifacts-row inline-open handler, site
+          ``"__open_inline_artifact__"`` — see :meth:`TextualChatApp.
+          on_option_list_option_selected`).
+        - EVENT-frame sites (``frame_kind`` NOT populated, 7 total): one
+          per ``etype`` branch (``session_attached``, ``user_submitted``,
+          ``turn_started``, ``inbox_cancel``,
+          ``intervention_answer_submitted``, ``session_halted``,
+          ``agent_delta``) — ``etype`` is a runtime value, but each
+          branch's own ``site`` literal is hardcoded to match it, so the
+          key stays exactly as granular as before this change.
+        - Turn-end cleanup sites (``frame_kind`` NOT populated, 5 total):
+          one per cleanup step (activity-row clear, the 3 orphan sweeps,
+          turn-parent settle). These 5 run for whichever of
+          :data:`_TURN_END_EVENT_TYPES`'s 3 values ended the turn, so
+          ``etype`` does NOT distinguish them — the ``site`` literal
+          names the STEP, not the event.
+        - Frame-unrelated sites (``frame_kind`` NOT populated, 4 total):
+          the queue-view seed (``"_seed_queue_view"``), the compact-
+          layout guard (``"_apply_compact_layout"``), the live-chrome
+          refresh guard (``"_refresh_live_chrome"``), and the post-
+          supply-failure chrome refresh (``"_post_supply_failure_chrome_
+          refresh"``). None of these has a frame to name a kind from.
+        - NOT routed through this method (2, deliberately excluded):
+          the ``asyncio.CancelledError``/frame-supply ``except Exception``
+          legs at the very bottom of :meth:`_pump_frames` both ``raise``
+          after logging — a re-raised exception is not "swallowed", so
+          it is out of this counter's own scope.
 
         ``emit_cli_event`` (cwd-derived project root), not ``emit_direct_
         event`` with an explicit root: unlike a long-lived multi-project
@@ -5909,31 +5973,32 @@ class TextualChatApp(App):
 
         Never includes the exception's own message/traceback — that is
         `logger.exception`'s own job (already called at every one of
-        this method's call sites — 4 inside :meth:`_pump_frames`, plus
-        #6224's own outside-the-pump one — unchanged); the audit-event carries
-        only ``frame_kind``/``exception_type`` (named ``frame_kind``,
-        not ``kind`` — ``emit_cli_event``'s own first positional
-        parameter is itself named ``kind``, the audit-event's own kind
-        string; passing this method's ``kind`` argument under that same
-        name collides with it), the structured facts a post-mortem
-        reader queries by, not the free-text a log grep already
-        answers."""
-        first_occurrence = self._pump_swallow_stats.record(kind, exc)
+        this method's call sites, unchanged); the audit-event carries
+        only ``site``/``exception_type`` and, where applicable,
+        ``frame_kind`` (named ``frame_kind``, not ``kind`` —
+        ``emit_cli_event``'s own first positional parameter is itself
+        named ``kind``, the audit-event's own kind string; passing
+        either argument under that same name collides with it), the
+        structured facts a post-mortem reader queries by, not the
+        free-text a log grep already answers."""
+        first_occurrence = self._pump_swallow_stats.record(site, exc)
         if not first_occurrence:
             return
         try:
             from reyn.core.events.events import emit_cli_event
 
-            emit_cli_event(
-                "pump_exception_swallowed",
-                frame_kind=kind,
-                exception_type=type(exc).__name__,
-            )
+            payload: dict[str, str] = {
+                "site": site,
+                "exception_type": type(exc).__name__,
+            }
+            if frame_kind is not None:
+                payload["frame_kind"] = frame_kind
+            emit_cli_event("pump_exception_swallowed", **payload)
         except Exception:
             logger.exception(
                 "textual chat: failed to emit pump_exception_swallowed "
-                "for kind=%r (diagnostic-only, does not block the pump)",
-                kind,
+                "for site=%r (diagnostic-only, does not block the pump)",
+                site,
             )
 
     def _ingest_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage] | None":
@@ -8012,8 +8077,9 @@ class TextualChatApp(App):
                     if frame.kind == "snapshot":
                         try:
                             self._seed_queue_view(frame)
-                        except Exception:
+                        except Exception as exc:
                             logger.exception("textual chat: queue-view seed failed")
+                            self._record_pump_swallow("_seed_queue_view", exc)
                         self._queue_seeded = True
                 else:
                     # #5895: the ``session_attached`` barrier is EXEMPT from
@@ -8048,53 +8114,62 @@ class TextualChatApp(App):
                         if etype == "session_attached":
                             try:
                                 await self._handle_session_attached_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: session_attached reset+hydrate failed"
                                 )
+                                self._record_pump_swallow("session_attached", exc)
                         elif etype == "user_submitted":
                             try:
                                 self._handle_user_submitted_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: user_submitted ingest failed"
                                 )
+                                self._record_pump_swallow("user_submitted", exc)
                         elif etype == "turn_started":
                             try:
                                 self._handle_turn_started_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: turn_started queue-promote failed"
                                 )
+                                self._record_pump_swallow("turn_started", exc)
                         elif etype == "inbox_cancel":
                             try:
                                 self._handle_inbox_cancel_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: inbox_cancel ingest failed"
                                 )
+                                self._record_pump_swallow("inbox_cancel", exc)
                         elif etype == "intervention_answer_submitted":
                             try:
                                 self._handle_intervention_answer_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: intervention_answer_submitted "
                                     "ingest failed"
                                 )
+                                self._record_pump_swallow(
+                                    "intervention_answer_submitted", exc,
+                                )
                         elif etype == "session_halted":
                             try:
                                 self._handle_session_halted_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: session_halted status refresh failed"
                                 )
+                                self._record_pump_swallow("session_halted", exc)
                         elif etype == "agent_delta":
                             try:
                                 self._handle_agent_delta_event(frame.event)
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: agent_delta coalesce failed"
                                 )
+                                self._record_pump_swallow("agent_delta", exc)
                         elif etype in _TURN_END_EVENT_TYPES:
                             # #3693: the turn is over — the row goes, whichever of
                             # the three terminal events arrived. Guarded like its
@@ -8103,19 +8178,26 @@ class TextualChatApp(App):
                             # be able to.
                             try:
                                 self._activity.end()
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception("textual chat: activity row clear failed")
+                                self._record_pump_swallow("_turn_end_activity_clear", exc)
                             try:
                                 self._sweep_orphaned_running_tools()
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: orphaned-tool sweep failed"
                                 )
+                                self._record_pump_swallow(
+                                    "_turn_end_orphaned_tools_sweep", exc,
+                                )
                             try:
                                 self._sweep_orphaned_streaming_replies()
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: orphaned-stream sweep failed"
+                                )
+                                self._record_pump_swallow(
+                                    "_turn_end_orphaned_streams_sweep", exc,
                                 )
                             try:
                                 # #6076 ②: its own sibling try/except, NOT
@@ -8125,9 +8207,12 @@ class TextualChatApp(App):
                                 # class is swept independently, same as the
                                 # tool/stream pair already is.
                                 self._sweep_orphaned_pipeline_runs()
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: orphaned-pipeline sweep failed"
+                                )
+                                self._record_pump_swallow(
+                                    "_turn_end_orphaned_pipeline_sweep", exc,
                                 )
                             try:
                                 # #4691 arc item ①: settle the turn's own parent
@@ -8136,9 +8221,12 @@ class TextualChatApp(App):
                                 # children a terminal state, so nothing here can
                                 # observe a child still RUNNING.
                                 self._settle_turn_parent()
-                            except Exception:
+                            except Exception as exc:
                                 logger.exception(
                                     "textual chat: turn-parent settle failed"
+                                )
+                                self._record_pump_swallow(
+                                    "_turn_end_settle_parent", exc,
                                 )
                     else:
                         msg = frame.message
@@ -8166,13 +8254,19 @@ class TextualChatApp(App):
                                 )
                             except Exception as exc:
                                 logger.exception("textual chat: /copy sentinel failed")
-                                self._record_pump_swallow("__copy_last_reply__", exc)
+                                self._record_pump_swallow(
+                                    "__copy_last_reply__",
+                                    exc,
+                                    frame_kind=msg.kind,
+                                )
                         elif msg.kind == "__rewind_list__":
                             try:
                                 await self._handle_rewind_request(msg)
                             except Exception as exc:
                                 logger.exception("textual chat: /rewind sentinel failed")
-                                self._record_pump_swallow("__rewind_list__", exc)
+                                self._record_pump_swallow(
+                                    "__rewind_list__", exc, frame_kind=msg.kind,
+                                )
                         elif msg.kind == "__open_artifact__":
                             try:
                                 # #6230 stage 1: same split as /copy above —
@@ -8182,7 +8276,9 @@ class TextualChatApp(App):
                                 )
                             except Exception as exc:
                                 logger.exception("textual chat: /open sentinel failed")
-                                self._record_pump_swallow("__open_artifact__", exc)
+                                self._record_pump_swallow(
+                                    "__open_artifact__", exc, frame_kind=msg.kind,
+                                )
                         elif msg.kind not in _SKIP_KINDS:
                             try:
                                 self._ingest_frame(msg)
@@ -8191,7 +8287,9 @@ class TextualChatApp(App):
                                     "textual chat: frame ingest failed for kind=%r",
                                     msg.kind,
                                 )
-                                self._record_pump_swallow(msg.kind, exc)
+                                self._record_pump_swallow(
+                                    "_ingest_frame", exc, frame_kind=msg.kind,
+                                )
                 # F5b + #3338: refresh the live chrome (the always-visible
                 # status-values line, plus whichever drawer pane is OPEN) on EVERY
                 # frame — DISPLAY **and** EVENT alike. This used to sit inside the
@@ -8212,10 +8310,12 @@ class TextualChatApp(App):
                     # drawer.
                     try:
                         self._apply_compact_layout()
-                    except Exception:
+                    except Exception as exc:
                         logger.exception("textual chat: compact layout failed")
-                except Exception:
+                        self._record_pump_swallow("_apply_compact_layout", exc)
+                except Exception as exc:
                     logger.exception("textual chat: live chrome refresh failed")
+                    self._record_pump_swallow("_refresh_live_chrome", exc)
         except asyncio.CancelledError:
             # #5329 A: this worker's own task was cancelled (app teardown
             # already in progress via some OTHER path, or a #5050-style
@@ -8276,9 +8376,12 @@ class TextualChatApp(App):
             # on the next frame that will never arrive.
             try:
                 self._refresh_live_chrome()
-            except Exception:
+            except Exception as chrome_exc:
                 logger.exception(
                     "textual chat: post-supply-failure chrome refresh failed"
+                )
+                self._record_pump_swallow(
+                    "_post_supply_failure_chrome_refresh", chrome_exc,
                 )
             raise
         else:

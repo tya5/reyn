@@ -732,14 +732,17 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     # still starts (degrades to empty text, same as before) -- this is a
     # WARN-class diagnostic, not a startup failure.
     "project_context_unreadable",
-    # #5732 (architect ruling): the textual chat pump's own bounded
-    # diagnostic for a swallowed per-frame exception (/copy sentinel,
-    # /rewind sentinel, __open_artifact__ sentinel, _ingest_frame) --
-    # one event per FIRST
-    # occurrence of a (frame_kind, exception type) pair, never per
-    # occurrence (a broken call site fails every frame; the running
-    # count is exposed separately via PumpSwallowStats.count, which is
-    # complete -- this event is bounded, not a duplicate of the count).
+    # #5732 (architect ruling), widened #6234 (architect ruling,
+    # issuecomment-5772189312): TextualChatApp._record_pump_swallow's own
+    # bounded diagnostic for a swallowed exception -- now covering 21
+    # call sites (display-frame sentinels, EVENT-frame handlers,
+    # turn-end cleanup, and frame-unrelated guards, not only the pump's
+    # display-frame legs) -- one event per FIRST occurrence of a `site`
+    # (a static call-site literal, never a frame's own kind) and
+    # exception-type pair, never per occurrence (a broken call site
+    # fails every frame; the running count is exposed separately via
+    # PumpSwallowStats.count, which is complete -- this event is
+    # bounded, not a duplicate of the count).
     "pump_exception_swallowed",
     "recovery_summary_persisted",
     "repo_ingest_files_skipped",
