@@ -561,8 +561,15 @@ class SnapshotJournal:
         counterpart, called at shutdown so a clean exit never leaves a trailing gap.
 
         Fire-and-forget through the durability worker, AFTER the paired WAL append (FIFO lag →
-        applied_seq ≤ durable-WAL-seq, criterion #1). The hot path NEVER awaits durability (the
-        blocking-invariant) — and now, on non-triggering calls, does no work at all.
+        applied_seq ≤ durable-WAL-seq, criterion #1). #6077 提案 4 (strengthened from the earlier,
+        await-only wording that let `deepcopy`/`json.dumps`/`open`/`write`/`close` sit on the
+        loop unawaited): the blocking-invariant is now that the hot path neither AWAITS nor
+        PERFORMS durability work — submit-and-proceed, checked by
+        `tests/core/test_6077_hot_path_durability_boundary.py`'s AST-derived population (see that
+        module's own SCOPE note for what it does and does not cover). `copy.deepcopy` in
+        `_build_snapshot_write_job` below is CAPTURE (fixing a consistent view before a later
+        in-place mutation), not durability — the invariant's line is drawn there, not at "no
+        synchronous work at all" — and now, on non-triggering calls, does no work at all.
 
         No WAL (`state_log is None`: tests / non-chat) → the original synchronous save."""
         if self._state_log is None:

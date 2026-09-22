@@ -376,8 +376,12 @@ class StateLog:
         the WAL job, which the worker's FIFO runs first). SYNCHRONOUS enqueue, so an
         (append_nowait, save_nowait) pair with NO ``await`` between is atomic on the loop — no
         concurrent mutation's WAL job interleaves between the pair → ``snap_N`` reads ``WAL_N``'s
-        seq, never a later one (invariant #2). The hot path NEVER awaits durability (the
-        blocking-invariant: submit-and-proceed)."""
+        seq, never a later one (invariant #2). #6077 提案 4 (strengthened from the earlier,
+        await-only wording): the blocking-invariant is now that the hot path neither AWAITS nor
+        PERFORMS durability work (open/write/fsync, or the O(n) `json.dumps`/`copy.deepcopy`
+        serialize a durable write needs) — submit-and-proceed, checked by
+        `tests/core/test_6077_hot_path_durability_boundary.py`'s AST-derived population (see that
+        module's own SCOPE note for what it does and does not cover)."""
         if kind not in WAL_EVENT_KINDS:
             raise ValueError(f"unknown WAL event kind: {kind!r}")
         self._worker.submit_nowait(self._wal_write_job(kind, fields, None))
