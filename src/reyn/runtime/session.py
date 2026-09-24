@@ -4625,7 +4625,20 @@ class Session:
         invisible to it by construction; the public-member ceiling in
         that same file only counts the surface's SIZE, never which
         caller reaches which member. This paragraph — read by whoever
-        next opens this method — is the only thing standing guard."""
+        next opens this method — is the only thing standing guard.
+
+        🔴 **``flush()`` has two ways to return, and the caller cannot
+        tell them apart** — (1) it actually drained the queue, or (2)
+        it returned WITHOUT draining anything at all, silently
+        (``DurabilityWorker.flush``, ``durability_worker.py``: a no-op
+        when the worker was never used, when this call lands on a
+        DIFFERENT event loop than the one the queue is bound to, or
+        after a #6261 loop-rebind dropped whatever was still queued on
+        the old loop). **∴ this barrier is not proof anything flowed.**
+        ⚠️ **``clear_history()``'s own ordering is only guaranteed on
+        path (1)** — on (2) a write can still be sitting unflushed when
+        the fresh segment opens. Closing (2)'s silence is #6261 (out of
+        this PR's scope) — ``durability_worker.py`` is untouched here."""
         await self._history_durability_worker.flush()
 
     def _maybe_seal_active_history_segment(self) -> None:
