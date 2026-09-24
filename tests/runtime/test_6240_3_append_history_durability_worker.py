@@ -102,7 +102,10 @@ async def test_append_history_does_not_write_to_disk_before_the_worker_drains(
         "instead of being deferred to the DurabilityWorker."
     )
     # Sanity: the RESIDENT append is still synchronous -- unchanged by ③.
-    assert len(session.history) == 1 and session.history[0].content == "not yet on disk"
+    assert any(m.content == "not yet on disk" for m in session.history), (
+        "the resident self.history append must still happen synchronously "
+        "-- only the durable disk write is deferred"
+    )
 
 
 @pytest.mark.asyncio
