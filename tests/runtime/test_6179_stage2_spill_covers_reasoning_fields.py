@@ -159,8 +159,11 @@ def test_thinking_blocks_never_replaced_reasoning_content_on_same_turn_is(
         "spillability": "first_choice",
     }
 
+    # #6240 ④: _spill_batch_for_retry now requires record_sink — this
+    # test doesn't assert on it (no is_already_spilled check follows in
+    # THIS test), a throwaway list is enough.
     edits = driver._spill_batch_for_retry(
-        [turn], chain_id="c1", seq_by_id={id(turn): 1},
+        [turn], chain_id="c1", seq_by_id={id(turn): 1}, record_sink=[],
     )
 
     (only,) = edits  # exactly one candidate, exactly one edit
@@ -205,8 +208,11 @@ def test_not_spillable_mapping_protects_a_field_even_if_it_were_a_string(
         "spillability": "first_choice",
     }
 
+    # #6240 ④: _spill_batch_for_retry now requires record_sink — this
+    # test doesn't assert on it (no is_already_spilled check follows in
+    # THIS test), a throwaway list is enough.
     edits = driver._spill_batch_for_retry(
-        [turn], chain_id="c1", seq_by_id={id(turn): 1},
+        [turn], chain_id="c1", seq_by_id={id(turn): 1}, record_sink=[],
     )
 
     (only,) = edits  # content alone still makes progress
@@ -248,10 +254,18 @@ def test_content_already_spilled_turn_still_spills_its_reasoning_field(
 
     # Produce a REAL spilled-preview content string via the same mechanism
     # under test, so "already spilled" is verified, not asserted.
-    already_spilled_content = history_buffer.spill_turn_content(
+    # #6240 ④: spill_turn_content returns its durable record now rather
+    # than appending it itself — appended here directly (this file's
+    # own `history_appender=history.append` wiring) so
+    # `is_already_spilled` (reading the supersede map back off
+    # `history_fn()`) recognises it below, matching production.
+    _outcome0 = history_buffer.spill_turn_content(
         "original oversized content " * 200, chain_id="c0", tool="history", seq=1,
     )
+    already_spilled_content = _outcome0.replacement
     assert already_spilled_content is not None
+    assert _outcome0.record is not None
+    history.append(_outcome0.record)
     assert history_buffer.is_already_spilled(already_spilled_content)
 
     turn = {
@@ -261,8 +275,11 @@ def test_content_already_spilled_turn_still_spills_its_reasoning_field(
         "spillability": "first_choice",
     }
 
+    # #6240 ④: _spill_batch_for_retry now requires record_sink — this
+    # test doesn't assert on it (no is_already_spilled check follows in
+    # THIS test), a throwaway list is enough.
     edits = driver._spill_batch_for_retry(
-        [turn], chain_id="c1", seq_by_id={id(turn): 1},
+        [turn], chain_id="c1", seq_by_id={id(turn): 1}, record_sink=[],
     )
 
     (only,) = edits  # progress: exactly one edit, not an empty batch
@@ -285,14 +302,21 @@ def test_fully_spilled_turn_is_not_re_offered_as_further_progress(tmp_path):
     history: "list" = []
     driver, history_buffer = _make_real_driver(tmp_path, history=history)
 
-    spilled_content = history_buffer.spill_turn_content(
+    # #6240 ④: same as the sibling test above — append each returned
+    # record directly, playing the production loop-side appender role.
+    _outcome_c = history_buffer.spill_turn_content(
         "original oversized content " * 200, chain_id="c0", tool="history", seq=1,
     )
-    spilled_reasoning = history_buffer.spill_turn_content(
+    _outcome_r = history_buffer.spill_turn_content(
         "original oversized reasoning " * 200, chain_id="c0", tool="history", seq=2,
     )
+    spilled_content = _outcome_c.replacement
+    spilled_reasoning = _outcome_r.replacement
     assert spilled_content is not None
     assert spilled_reasoning is not None
+    assert _outcome_c.record is not None and _outcome_r.record is not None
+    history.append(_outcome_c.record)
+    history.append(_outcome_r.record)
 
     fully_spilled_turn = {
         "role": "assistant",
@@ -303,6 +327,7 @@ def test_fully_spilled_turn_is_not_re_offered_as_further_progress(tmp_path):
 
     edits = driver._spill_batch_for_retry(
         [fully_spilled_turn], chain_id="c1", seq_by_id={id(fully_spilled_turn): 1},
+        record_sink=[],
     )
 
     assert edits == [], (

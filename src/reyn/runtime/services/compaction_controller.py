@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
@@ -677,6 +677,16 @@ class CompactionController:
         # only ``Session._check_turn_mid_memory_ladder``'s own turn-mid
         # caller ever passes a real value.
         protect_seq_gte: "int | None" = None,
+        # #6240 ④: both, or neither — same optional-collaborator degrade
+        # as `spill_reachability_fn` above. When both are given, drained
+        # after EVERY shrink attempt this call's own `_run_compaction`
+        # loop makes (see `_run_compaction`'s own comment for why), so a
+        # LATER attempt within the SAME `/compact` pass sees an EARLIER
+        # attempt's own spill via `is_already_spilled` — matching the
+        # reactive ladder's identical fix (`RecoveryLadder._drain_spill_
+        # records`, engine.py).
+        spill_record_sink: "list[Any] | None" = None,
+        append_history_fn: "Callable[[Any], None] | None" = None,
     ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
@@ -885,6 +895,13 @@ class CompactionController:
                 spilled_count, spilled_bytes_freed = await asyncio.to_thread(
                     _spill_all_faces, decompose_for_retry, spill_fn,
                 )
+                # #6240 ④: back on the loop (past the await above) —
+                # append whatever spill_fn collected during that single
+                # to_thread call. Only one dispatch on this branch (no
+                # repeat-attempt loop), so a single drain here is enough.
+                if spill_record_sink is not None and append_history_fn is not None:
+                    while spill_record_sink:
+                        append_history_fn(spill_record_sink.pop(0))
             return ForceCompactResult(
                 outcome=outcome, candidate_count=0, batch_truncated=batch_truncated,
                 spilled_count=spilled_count, spilled_bytes_freed=spilled_bytes_freed,
@@ -898,6 +915,8 @@ class CompactionController:
             await self._run_compaction(
                 candidates, latest, spill_fn=spill_fn,
                 spill_capability_present=spill_capability_present,
+                spill_record_sink=spill_record_sink,
+                append_history_fn=append_history_fn,
             )
         except Exception:
             # #5633 (lead-coder review): NOT re-raised, and NOT re-emitted
@@ -1021,6 +1040,11 @@ class CompactionController:
         # same parameter name above.
         spill_fn: "Callable[..., list[tuple[int, dict]]]",
         spill_capability_present: bool = True,
+        # #6240 ④: forwarded from force_compact_now — see this method's
+        # own `while True:` loop below for why draining happens after
+        # EVERY shrink attempt, not once at the end.
+        spill_record_sink: "list[Any] | None" = None,
+        append_history_fn: "Callable[[Any], None] | None" = None,
     ) -> None:
         """Call the compaction engine and persist the resulting summary entry."""
         cfg = self._config
@@ -1255,6 +1279,16 @@ class CompactionController:
                         spill_fn=_spill_fn_adapted, saw_byte_limit=_last_saw_byte_limit,
                         spill_capability_present=spill_capability_present,
                     )
+                    # #6240 ④: back on the loop (past the await above) —
+                    # append whatever this attempt's spill collected
+                    # BEFORE the `while True:` dispatches the next
+                    # attempt (`continue` below), so is_already_spilled
+                    # sees it on a later attempt within this SAME
+                    # `/compact` pass — same reasoning as
+                    # RecoveryLadder._drain_spill_records (engine.py).
+                    if spill_record_sink is not None and append_history_fn is not None:
+                        while spill_record_sink:
+                            append_history_fn(spill_record_sink.pop(0))
                     continue
                 raise  # FATAL/RETRYABLE — bare, unchanged (#5633)
         # #5791 (BLOCKING correction, lead-coder review of that PR's own

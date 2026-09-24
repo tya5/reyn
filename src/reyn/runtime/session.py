@@ -13087,8 +13087,20 @@ class Session:
                 "compact_now_spill_capability_absent",
                 driver_type=type(self._loop_driver).__name__,
             )
+        # #6240 ④ (architect ruling): `_spill_batch_for_retry` no longer
+        # appends its own durable spill records from inside the worker
+        # thread `force_compact_now` dispatches to — it collects them
+        # into `record_sink` instead, and THIS method (on the loop —
+        # `async def`, no `to_thread` at this level) drains and appends
+        # them once `force_compact_now` returns below. The degrade
+        # lambda (no `_spill_batch_for_retry` on this driver at all)
+        # never produces a record in the first place, so it needs no
+        # sink.
+        _spill_records: "list[ChatMessage]" = []
         _spill_fn = (
-            _partial(_spill_impl, chain_id="manual-compact")
+            _partial(
+                _spill_impl, chain_id="manual-compact", record_sink=_spill_records,
+            )
             if _spill_impl is not None else (lambda _candidates: [])
         )
         # #5888 3″: the SAME optional-collaborator degrade as ``_spill_
@@ -13116,7 +13128,20 @@ class Session:
             # #5888: "/compact" asks to shrink; the reactive ladder asks
             # whether it still fits. See force_compact_now's own docstring.
             selection=selection,
+            # #6240 ④: drained after EVERY shrink attempt INSIDE
+            # force_compact_now itself (`_run_compaction`'s own `while
+            # True:` loop, compaction_controller.py) -- needed so
+            # is_already_spilled sees an earlier attempt's own spill
+            # within this SAME /compact pass, never appended from the
+            # worker thread that produces it.
+            spill_record_sink=_spill_records,
+            append_history_fn=self._append_history,
         )
+        # #6240 ④: backstop -- drain whatever is left (there should be
+        # nothing: force_compact_now already drained via the sink/fn
+        # above after each of its own internal shrink attempts).
+        for _record in _spill_records:
+            self._append_history(_record)
         _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()
         # #5888: the model's REAL context window and the most recent

@@ -133,8 +133,15 @@ def test_a_user_origin_spill_classifies_the_same_as_a_tool_origin_spill(
     # "before" snapshot is the correct starting point, not an error.
     store.history_content_dir.mkdir(parents=True, exist_ok=True)
     before = set(store.history_content_dir.iterdir())
-    tool_preview = buf.spill_turn_content(huge, tool="read_file", seq=1)
-    user_preview = buf.spill_turn_content(huge + " (a second, distinct body)", tool="user", seq=2)
+    # #6240 ④: spill_turn_content returns SpillTurnResult(replacement,
+    # record) now — `.record` is irrelevant here (no history_appender is
+    # configured on this minimal buffer, so it is always None); only
+    # `.replacement` is the value this test's own write/classify pairing
+    # cares about.
+    tool_preview = buf.spill_turn_content(huge, tool="read_file", seq=1).replacement
+    user_preview = buf.spill_turn_content(
+        huge + " (a second, distinct body)", tool="user", seq=2,
+    ).replacement
     assert tool_preview is not None and user_preview is not None, (
         "both spills must actually offload (a media_store is configured and "
         "cap_tokens=1 forces the branch) -- a None here means this test's own "

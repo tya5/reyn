@@ -147,9 +147,17 @@ def test_spill_record_carries_the_real_turn_seq_not_a_defaulted_one(tmp_path):
     turn = _big_wire_turn(seq=77)
     seq_by_id = {id(turn): 77}
 
+    # #6240 ④: _spill_batch_for_retry collects durable records into
+    # record_sink now rather than appending them itself — this test
+    # plays the production loop-side appender role directly, appending
+    # each after the call (exactly what router_loop_driver.py's own
+    # `_drive_retry_ladder` does once its `to_thread` call returns).
+    _records: "list[ChatMessage]" = []
     edits = driver._spill_batch_for_retry(
-        [turn], chain_id="c1", seq_by_id=seq_by_id,
+        [turn], chain_id="c1", seq_by_id=seq_by_id, record_sink=_records,
     )
+    for _record in _records:
+        history.append(_record)
 
     assert edits, "expected a real spill edit — the candidate is large and eligible"
     records = [m for m in history if m.role == "spill_record"]
@@ -176,9 +184,13 @@ def test_spill_record_falls_back_to_1_only_when_provenance_is_genuinely_unavaila
     turn = _big_wire_turn(seq=77)
     empty_seq_by_id: "dict[int, int]" = {}
 
+    # #6240 ④: see the sibling test above — play the loop-side appender.
+    _records: "list[ChatMessage]" = []
     edits = driver._spill_batch_for_retry(
-        [turn], chain_id="c1", seq_by_id=empty_seq_by_id,
+        [turn], chain_id="c1", seq_by_id=empty_seq_by_id, record_sink=_records,
     )
+    for _record in _records:
+        history.append(_record)
 
     assert edits, "expected a real spill edit regardless of provenance resolution"
     records = [m for m in history if m.role == "spill_record"]

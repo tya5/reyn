@@ -28,6 +28,7 @@ from reyn.services.compaction.engine import wire_role as _wire_role
 
 if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
+    from reyn.runtime.chat_message import ChatMessage
     from reyn.services.compaction.engine import ChatSummary
 
 
@@ -420,7 +421,7 @@ class RouterLoopDriver:
 
     def _spill_batch_within_face(
         self, turns: "list[dict]", *, chain_id: str, granularity: str,
-        seq_fn: "Callable[[int, dict], int]",
+        seq_fn: "Callable[[int, dict], int]", record_sink: "list[ChatMessage]",
     ) -> "list[tuple[int, dict]]":
         """#5592 (owner ruling, "1 request = 面 × 同一 Spillability";
         "head と tail を混ぜない") — try the highest-priority non-empty
@@ -491,7 +492,25 @@ class RouterLoopDriver:
         ``provider_specific_fields`` are NEVER offered here (see that
         mapping's own docstring for why a preview-string replacement
         would break them on providers that require the native
-        round-trip)."""
+        round-trip).
+
+        #6240 ④: ``record_sink`` — REQUIRED, never optional (matching
+        this file's own ``spill_fn`` convention of a required param
+        over a silent default, e.g. ``shrink_pool_after_overflow``'s
+        own docstring) — collects every durable
+        ``RouterHistoryBuffer.spill_turn_content(...).record`` this
+        call produces (``content`` and/or a reasoning field, per
+        candidate). This method runs OFF the loop (dispatched via
+        ``asyncio.to_thread`` — directly by ``_attempt_reactive_spill``,
+        or transitively via ``_spill_batch_for_retry``), so it must
+        never append these itself; the caller drains ``record_sink``
+        and appends each entry once back on the loop. A plain
+        ``list`` passed by reference is safe here with NO extra
+        synchronization: the worker thread only ever appends to it,
+        and the loop-side caller only ever reads it AFTER the
+        ``to_thread`` call that reached this method has already
+        returned — the ``await`` itself is what orders "every append
+        happened" before "the loop reads the list"."""
         def _eligible(
             indexed: "list[tuple[int, dict]]",
         ) -> "list[tuple[int, dict]]":
@@ -555,7 +574,10 @@ class RouterLoopDriver:
                 # decreases).
                 _changed: "dict[str, str]" = {}
                 if not self._history_buffer.is_already_spilled(turn["content"]):
-                    replacement = self._history_buffer.spill_turn_content(
+                    # #6240 ④: spill_turn_content no longer appends its own
+                    # durable record — it returns one (SpillTurnResult) for
+                    # THIS method's caller to append once back on the loop.
+                    _outcome = self._history_buffer.spill_turn_content(
                         turn["content"], chain_id=chain_id,
                         # #5564: name this write by the turn's own origin —
                         # never the bare "tool" default for a non-tool
@@ -563,6 +585,9 @@ class RouterLoopDriver:
                         tool=turn.get("name") or turn.get("role") or "history",
                         seq=seq_fn(idx, turn),
                     )
+                    replacement = _outcome.replacement
+                    if _outcome.record is not None:
+                        record_sink.append(_outcome.record)
                     if replacement is not None and replacement != turn["content"]:
                         _changed["content"] = replacement
                 for _field, _spillable in _REASONING_BUNDLE_SPILLABLE_FIELDS.items():
@@ -580,11 +605,14 @@ class RouterLoopDriver:
                         continue
                     if self._history_buffer.is_already_spilled(_value):
                         continue
-                    _field_replacement = self._history_buffer.spill_turn_content(
+                    _field_outcome = self._history_buffer.spill_turn_content(
                         _value, chain_id=chain_id,
                         tool=turn.get("name") or turn.get("role") or "history",
                         seq=seq_fn(idx, turn),
                     )
+                    _field_replacement = _field_outcome.replacement
+                    if _field_outcome.record is not None:
+                        record_sink.append(_field_outcome.record)
                     if _field_replacement is None or _field_replacement == _value:
                         continue
                     _changed[_field] = _field_replacement
@@ -661,9 +689,13 @@ class RouterLoopDriver:
         for _face in (head, raw_middle, tail):
             # #5898: off the loop — a spill batch runs the cap estimate
             # (tiktoken over each candidate's whole body) plus its hash
-            # and the file write; the history append it makes goes
-            # through the same seams build_history's own to_thread
-            # already exercises from a worker thread.
+            # and the file write.
+            # #6240 ④: the history append the spill batch used to make
+            # from inside that worker thread no longer happens there —
+            # ``record_sink`` collects the durable records the batch
+            # produced, and THIS loop-side frame (past the ``await``,
+            # so genuinely back on the loop) appends each one below.
+            _records: "list[ChatMessage]" = []
             _edits = await asyncio.to_thread(
                 self._spill_batch_within_face,
                 _face, chain_id=chain_id, granularity=_granularity,
@@ -673,7 +705,10 @@ class RouterLoopDriver:
                 # exact value for a single-face, single-candidate call,
                 # since a batch here never spans more than one face).
                 seq_fn=lambda idx, _turn: idx + 1,
+                record_sink=_records,
             )
+            for _record in _records:
+                self._append_history_fn(_record)
             if _edits:
                 return True
         # Every face's every tier contributed nothing new — candidates
@@ -994,126 +1029,163 @@ class RouterLoopDriver:
         # counter, so the episode the row is gated on and the episode
         # those numbers belong to are the same span by construction,
         # not by two independently-maintained boundaries agreeing.
-        with self._recovery_episode_scope():
-            _upstream_counter_token = _start_upstream_recovery_call_counter()
-            try:
+        # #6240 4: collects every durable record this episode's
+        # spill_fn calls produced (both retry_loop's own attempt below
+        # and the force_compact_now fallback in the except block) --
+        # appended HERE, once, after leaving _recovery_episode_scope()
+        # (success or failure via this try/finally), which is genuinely
+        # on the loop: nothing in THIS method's own frame runs inside
+        # asyncio.to_thread -- only what retry_loop/
+        # force_compact_now each dispatch internally does, several
+        # frames down.
+        _spill_records: "list[ChatMessage]" = []
+        try:
+            with self._recovery_episode_scope():
+                _upstream_counter_token = _start_upstream_recovery_call_counter()
                 try:
-                    _shim = await _retry_loop(
-                        SP=self._history_buffer.build_system_prompt(),
-                        payload=payload,
-                        cfg=self._compaction,
-                        model=self._effective_router_model_class(),
-                        engine=self._compaction_controller._engine,
-                        learner=self._token_learner,
-                        main_call=_partial(
-                            self._router_main_call_for_retry,
-                            loop=loop, user_text=user_text,
-                        ),
-                        # #5720 ②: the fold callback (below) already
-                        # receives seq_by_id — the spill callback did not,
-                        # so mid's own seq_fn (_mid_seq_of) silently fell
-                        # back to a default instead of the turn's real
-                        # provenance (architect ruling: "provenance is not
-                        # structurally absent, only unwired").
-                        spill_fn=_partial(
-                            self._spill_batch_for_retry,
-                            chain_id=chain_id, seq_by_id=payload.seq_by_id,
-                        ),
-                        on_summary_used=_partial(
-                            self._persist_recovery_fold, seq_by_id=payload.seq_by_id,
-                        ),
-                        # #5720: the SAME snapshot _serialise_turn's own
-                        # summary branch uses — RouterHistoryBuffer's
-                        # spill_reachability_snapshot is the ONE
-                        # implementation both wire-egress points share
-                        # (never a private copy that could drift).
-                        spill_reachability_fn=(
-                            self._history_buffer.spill_reachability_snapshot
-                        ),
-                        # #5531 §10: no `max_iterations=` any more —
-                        # retry_loop abolished its iteration-count bound
-                        # (see its own "Bounded termination proof"
-                        # docstring). #4957's `chat.compaction.
-                        # max_shrink_iterations` config knob is therefore
-                        # ORPHANED by this change (nothing reads it any
-                        # more) — disclosed, not silently left: removing
-                        # the knob itself (schema/validation/docs/the ~10
-                        # test fixtures that still pass it) is its own
-                        # scoped follow-up, not folded into this already-
-                        # large PR.
-                    )
-                finally:
-                    _reset_upstream_recovery_call_counter(_upstream_counter_token)
-            except _UnrecoveredError:
-                # #4954 (b), architect-ruled, WIDENED #5578: on ANY
-                # UnrecoveredError exhaustion (byte-limit 413 OR a
-                # non-byte, token-axis terminal cause — no longer gated on
-                # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
-                # here — in the driver's except block, not inside
-                # retry_loop itself (retry_loop stays a pure TRANSPORT
-                # operation; compaction is the SEMANTIC operation that
-                # actually retires history entries, Session's own
-                # docstring: "the only operation meant to retire an
-                # entry"). Routed through `force_compact_now` — the SAME
-                # durable-watermark path `ContextBudgetAdvisor`'s
-                # pre-frame guard already uses
-                # (`_durable_active_history_after`-backed, continuous from
-                # the last real `covers_through_seq`) — deliberately NOT
-                # `retry_loop`'s own compaction result: its `covers` can
-                # cover only `raw_middle` while skipping `head` entirely,
-                # which is not continuous from the previous watermark and
-                # would silently mark the OLDEST unsummarized part of
-                # history "covered" without ever summarizing it (exactly
-                # owner's own real-machine shape).
-                #
-                # Axis-agnostic since #5578 (was gated on
-                # `saw_byte_limit`, so a token-cause exhaustion never
-                # reached here and had no durable recovery path at all).
-                # `fold_persist_policy`'s own docstring declares a stop-line on
-                # the irreversible compaction STEP, never on an axis — the
-                # widening matched this call site to that contract rather
-                # than deciding something new. Full history and the
-                # measurement behind it: #5578, #5528.
-                #
-                # Repeat-bounding (band question 1 — who stops this if it
-                # repeats): this block CAN run more than once per turn
-                # (`_run_with_shrink_and_byte_reduction` retries on ANY
-                # `UnrecoveredError`, #5364 §1.6 below). `force_compact_now`
-                # bounds it: it returns immediately when a pass is already
-                # running, or when the watermark has caught up to
-                # everything durably available — so the second call onward
-                # is a no-op, not a repeated summarization.
-                if self._compaction.fold_persist_policy == "next_turn":
-                    # #5712: `force_compact_now` now requires a real
-                    # spill_fn — reuse the SAME `chain_id` this method's
-                    # own retry_loop call above already used (this
-                    # fallback pass is still semantically part of
-                    # recovering THIS turn's overflow).
+                    try:
+                        _shim = await _retry_loop(
+                            SP=self._history_buffer.build_system_prompt(),
+                            payload=payload,
+                            cfg=self._compaction,
+                            model=self._effective_router_model_class(),
+                            engine=self._compaction_controller._engine,
+                            learner=self._token_learner,
+                            main_call=_partial(
+                                self._router_main_call_for_retry,
+                                loop=loop, user_text=user_text,
+                            ),
+                            # #5720 ②: the fold callback (below) already
+                            # receives seq_by_id — the spill callback did not,
+                            # so mid's own seq_fn (_mid_seq_of) silently fell
+                            # back to a default instead of the turn's real
+                            # provenance (architect ruling: "provenance is not
+                            # structurally absent, only unwired").
+                            spill_fn=_partial(
+                                self._spill_batch_for_retry,
+                                chain_id=chain_id, seq_by_id=payload.seq_by_id,
+                                # #6240 ④: same accumulator the except
+                                # block's own force_compact_now fallback
+                                # below binds — one drain, in `finally`.
+                                record_sink=_spill_records,
+                            ),
+                            on_summary_used=_partial(
+                                self._persist_recovery_fold, seq_by_id=payload.seq_by_id,
+                            ),
+                            # #5720: the SAME snapshot _serialise_turn's own
+                            # summary branch uses — RouterHistoryBuffer's
+                            # spill_reachability_snapshot is the ONE
+                            # implementation both wire-egress points share
+                            # (never a private copy that could drift).
+                            spill_reachability_fn=(
+                                self._history_buffer.spill_reachability_snapshot
+                            ),
+                            # #6240 ④: drained after EVERY shrink attempt
+                            # inside the ladder itself (RecoveryLadder.
+                            # _drain_spill_records, engine.py) — needed
+                            # so is_already_spilled sees an earlier
+                            # attempt's own spill within this SAME
+                            # episode. The outer `finally` below still
+                            # drains this same list too, as a backstop
+                            # for whatever the except block's own
+                            # force_compact_now call below adds.
+                            spill_record_sink=_spill_records,
+                            append_history_fn=self._append_history_fn,
+                            # #5531 §10: no `max_iterations=` any more —
+                            # retry_loop abolished its iteration-count bound
+                            # (see its own "Bounded termination proof"
+                            # docstring). #4957's `chat.compaction.
+                            # max_shrink_iterations` config knob is therefore
+                            # ORPHANED by this change (nothing reads it any
+                            # more) — disclosed, not silently left: removing
+                            # the knob itself (schema/validation/docs/the ~10
+                            # test fixtures that still pass it) is its own
+                            # scoped follow-up, not folded into this already-
+                            # large PR.
+                        )
+                    finally:
+                        _reset_upstream_recovery_call_counter(_upstream_counter_token)
+                except _UnrecoveredError:
+                    # #4954 (b), architect-ruled, WIDENED #5578: on ANY
+                    # UnrecoveredError exhaustion (byte-limit 413 OR a
+                    # non-byte, token-axis terminal cause — no longer gated on
+                    # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
+                    # here — in the driver's except block, not inside
+                    # retry_loop itself (retry_loop stays a pure TRANSPORT
+                    # operation; compaction is the SEMANTIC operation that
+                    # actually retires history entries, Session's own
+                    # docstring: "the only operation meant to retire an
+                    # entry"). Routed through `force_compact_now` — the SAME
+                    # durable-watermark path `ContextBudgetAdvisor`'s
+                    # pre-frame guard already uses
+                    # (`_durable_active_history_after`-backed, continuous from
+                    # the last real `covers_through_seq`) — deliberately NOT
+                    # `retry_loop`'s own compaction result: its `covers` can
+                    # cover only `raw_middle` while skipping `head` entirely,
+                    # which is not continuous from the previous watermark and
+                    # would silently mark the OLDEST unsummarized part of
+                    # history "covered" without ever summarizing it (exactly
+                    # owner's own real-machine shape).
                     #
-                    # #5726: `seq_by_id` is deliberately NOT bound here
-                    # (unlike the retry_loop call above, this call site's
-                    # own `payload.seq_by_id` would be STALE for what
-                    # `force_compact_now` actually offers — a fresh
-                    # `_run_compaction` candidate read from disk, not
-                    # `payload`'s own wire dicts). `compaction_controller.
-                    # py`'s own `_spill_fn_adapted` now computes a fresh,
-                    # correct `seq_by_id` from the wire dicts it actually
-                    # builds and calls this partial with it explicitly —
-                    # binding one here too would collide (`got multiple
-                    # values for keyword argument 'seq_by_id'`), the exact
-                    # class of bug #5725 introduced for the OTHER
-                    # force_compact_now caller (session.py, unwired
-                    # entirely) — this caller was wired, just to a value
-                    # that would now double-bind rather than one that
-                    # would ever have matched `_run_compaction`'s own
-                    # fresh candidates in the first place.
-                    await self._compaction_controller.force_compact_now(
-                        spill_fn=_partial(
-                            self._spill_batch_for_retry, chain_id=chain_id,
-                        ),
-                    )
-                raise
-        return _shim.usage
+                    # Axis-agnostic since #5578 (was gated on
+                    # `saw_byte_limit`, so a token-cause exhaustion never
+                    # reached here and had no durable recovery path at all).
+                    # `fold_persist_policy`'s own docstring declares a stop-line on
+                    # the irreversible compaction STEP, never on an axis — the
+                    # widening matched this call site to that contract rather
+                    # than deciding something new. Full history and the
+                    # measurement behind it: #5578, #5528.
+                    #
+                    # Repeat-bounding (band question 1 — who stops this if it
+                    # repeats): this block CAN run more than once per turn
+                    # (`_run_with_shrink_and_byte_reduction` retries on ANY
+                    # `UnrecoveredError`, #5364 §1.6 below). `force_compact_now`
+                    # bounds it: it returns immediately when a pass is already
+                    # running, or when the watermark has caught up to
+                    # everything durably available — so the second call onward
+                    # is a no-op, not a repeated summarization.
+                    if self._compaction.fold_persist_policy == "next_turn":
+                        # #5712: `force_compact_now` now requires a real
+                        # spill_fn — reuse the SAME `chain_id` this method's
+                        # own retry_loop call above already used (this
+                        # fallback pass is still semantically part of
+                        # recovering THIS turn's overflow).
+                        #
+                        # #5726: `seq_by_id` is deliberately NOT bound here
+                        # (unlike the retry_loop call above, this call site's
+                        # own `payload.seq_by_id` would be STALE for what
+                        # `force_compact_now` actually offers — a fresh
+                        # `_run_compaction` candidate read from disk, not
+                        # `payload`'s own wire dicts). `compaction_controller.
+                        # py`'s own `_spill_fn_adapted` now computes a fresh,
+                        # correct `seq_by_id` from the wire dicts it actually
+                        # builds and calls this partial with it explicitly —
+                        # binding one here too would collide (`got multiple
+                        # values for keyword argument 'seq_by_id'`), the exact
+                        # class of bug #5725 introduced for the OTHER
+                        # force_compact_now caller (session.py, unwired
+                        # entirely) — this caller was wired, just to a value
+                        # that would now double-bind rather than one that
+                        # would ever have matched `_run_compaction`'s own
+                        # fresh candidates in the first place.
+                        await self._compaction_controller.force_compact_now(
+                            spill_fn=_partial(
+                                self._spill_batch_for_retry, chain_id=chain_id,
+                                record_sink=_spill_records,
+                            ),
+                            # #6240 ④: drained after every shrink attempt
+                            # INSIDE force_compact_now itself (same
+                            # reasoning as the retry_loop call above) —
+                            # never from the worker thread that produces
+                            # them.
+                            spill_record_sink=_spill_records,
+                            append_history_fn=self._append_history_fn,
+                        )
+                    raise
+            return _shim.usage
+        finally:
+            for _record in _spill_records:
+                self._append_history_fn(_record)
 
     @staticmethod
     def _mid_seq_of(_idx: int, turn: dict, *, seq_by_id: "dict[int, int]") -> int:
@@ -1200,7 +1272,7 @@ class RouterLoopDriver:
 
     def _spill_batch_for_retry(
         self, candidates: "list[dict]", *,
-        chain_id: str, seq_by_id: "dict[int, int]",
+        chain_id: str, seq_by_id: "dict[int, int]", record_sink: "list[ChatMessage]",
     ) -> "list[tuple[int, dict]]":
         """#5531 §10 rung①: the spill batch retry_loop is handed. Was a closure
         in ``_run_with_shrink``; ``chain_id`` is the one value it captured and
@@ -1211,6 +1283,19 @@ class RouterLoopDriver:
         ``_persist_recovery_fold`` already receives from this method's own
         callers — threaded through to :meth:`_mid_seq_of` (see its own
         docstring for why this was previously silently unwired).
+
+        #6240 ④: this method is itself the ``spill_fn`` handed to
+        ``shrink_pool_after_overflow`` (engine.py), invoked from INSIDE
+        that function's own ``asyncio.to_thread`` dispatch — i.e. it
+        also runs off the loop, never as its own separate ``to_thread``
+        call. ``record_sink`` (REQUIRED — same convention as
+        ``_spill_batch_within_face``'s own) is passed straight through
+        to that method unchanged; THIS method's own return type (the
+        ``spill_fn`` contract every caller across engine.py /
+        compaction_controller.py already relies on) stays exactly as
+        it was — the record traffic rides the sink, never the return
+        value, specifically so that fixed external contract needs no
+        change.
         """
         # #5531 §10 rung① / #9.6: injected into retry_loop, not
         # imported by it — matches ``context_budget_advisor.py``'s
@@ -1251,6 +1336,7 @@ class RouterLoopDriver:
             # see _mid_seq_of's own docstring for why the pre-#5720
             # `turn.get("seq", 1)` always fell to the fallback.
             seq_fn=_partial(self._mid_seq_of, seq_by_id=seq_by_id),
+            record_sink=record_sink,
         )
         if _edits:
             return _edits
