@@ -4517,7 +4517,7 @@ class Session:
         # readable" contract for ``_durable_active_history_after`` (the
         # ONE reader that reads DISK, not resident memory) — architect's
         # ruling puts the cost on that reader instead: it now awaits
-        # :meth:`_flush_history_durability` immediately before its own
+        # :meth:`flush_history` immediately before its own
         # disk read (``force_compact_now``, compaction_controller.py).
         #
         # No-running-loop fallback (mirrors ``EventStore.write`` /
@@ -4578,7 +4578,7 @@ class Session:
         #6077 提案 3/6)."""
         await asyncio.to_thread(self._write_history_record_owned, seq, record, role)
 
-    async def _flush_history_durability(self) -> None:
+    async def flush_history(self) -> None:
         """Wait until every :meth:`_append_history` write enqueued so far
         has actually landed on disk (mirrors ``EventStore.flush`` /
         ``MediaStore.flush``). #6240 ③ (architect ruling): the ONE payer
@@ -4589,7 +4589,18 @@ class Session:
         read. A RESIDENT reader (``self.history`` — ``build_history``,
         ``is_already_spilled``, etc.) needs no call here at all: the
         resident append in :meth:`_append_history` is still synchronous,
-        unchanged by ③."""
+        unchanged by ③.
+
+        #6260 (architect ruling): PUBLIC — not for symmetry with
+        ``_append_history``, but because CLAUDE.md's testing policy is
+        explicit ("a test must not depend on private state... if neither
+        [a public surface nor a snapshot()-style read] exists, that
+        absence is the finding") and 30+ call sites across 20 test files
+        were already reaching this method through its underscore, the
+        finding itself. Every one of those call sites, and every
+        production caller (``clear_history``, the ``history_durability_
+        flush=`` wiring into ``CompactionController``), now calls this
+        SAME public name — there is no private twin left anywhere."""
         await self._history_durability_worker.flush()
 
     def _maybe_seal_active_history_segment(self) -> None:
@@ -4738,7 +4749,7 @@ class Session:
         ⭐ **Order is the invariant — do not reorder these 5 steps**:
 
         0. **Await every history write already queued landing on disk
-           first** (:meth:`_flush_history_durability`) — so nothing is
+           first** (:meth:`flush_history`) — so nothing is
            left to silently land in the fresh segment step 3 opens.
            ``self._history_durability_worker`` is its OWN DEDICATED
            ``DurabilityWorker`` instance (see that field's own ``__init__``
@@ -4783,7 +4794,7 @@ class Session:
         The caller (``clear_history.py``'s slash handler) keeps only the
         confirm-flow UX: the two-step confirmation prompt, the
         ``Currently: N turns`` line, and the success/error reply text."""
-        await self._flush_history_durability()
+        await self.flush_history()
         n_turns_before = len(self.history)
         self._invalidate_history_append_handle()
         self._active_segment_min_seq = None
@@ -5213,7 +5224,7 @@ class Session:
         truth). #6240 ③: this method itself does not (and, running off
         the loop via ``asyncio.to_thread``, cannot) await anything — the
         caller (``CompactionController.force_compact_now``) awaits
-        :meth:`_flush_history_durability` immediately BEFORE dispatching
+        :meth:`flush_history` immediately BEFORE dispatching
         this read, so what lands here already reflects every append made
         so far. Returns ``(turns, truncated)`` — ``truncated=True`` means
         more qualifying content exists past what was returned; the caller
@@ -7499,7 +7510,7 @@ class Session:
             history_from_disk=self._durable_active_history_after,
             # #6240 ③: awaited immediately before the disk read above —
             # see this controller's own docstring on the param.
-            history_durability_flush=self._flush_history_durability,
+            history_durability_flush=self.flush_history,
             latest_summary=self._latest_summary,
             # #5939 PR-4: lets force_compact_now refuse rather than derive
             # a wrong prev_cover from a hydration read this session's own
@@ -10434,8 +10445,14 @@ class Session:
                 # active-segment bookkeeping never saw) or be silently
                 # dropped entirely by loop teardown — the same class of
                 # tail-loss ``EventStore.aclose``'s own docstring names
-                # for a plain ``/quit``.
-                await self._history_durability_worker.flush()
+                # for a plain ``/quit``. #6260: ``flush_history()`` (not
+                # the worker directly) — same call, through the public
+                # seam every other caller now uses — and, as of #6260,
+                # safe against a drainer that loop teardown / a hard-
+                # cancel already killed mid-queue (see ``DurabilityWorker.
+                # _drain_to_empty``'s own docstring for the inline-drain
+                # fallback this relies on).
+                await self.flush_history()
                 # #6077 提案 1: close the session-lifetime history.jsonl
                 # append handle right at this session's own end-of-life
                 # point — an un-closed handle here is exactly the failure

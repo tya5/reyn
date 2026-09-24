@@ -198,7 +198,7 @@ async def test_real_eviction_never_reserializes_a_still_resident_message(
     # counting calls, or this assertion under-counts (it would still be
     # counting resident_bytes()'s n_appends calls, but 0 of the n_appends
     # durable-write calls that hadn't run yet).
-    await s._flush_history_durability()
+    await s.flush_history()
     assert calls[0] == 2 * n_appends, (
         f"expected exactly {2 * n_appends} real json.dumps calls "
         f"({n_appends} from resident_bytes(), one per distinct message, "

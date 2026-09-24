@@ -115,8 +115,8 @@ async def test_crash_recovery_restores_each_session_own_history(tmp_path, monkey
     # #6240 ③: each _append_history above enqueued its disk write on a
     # DurabilityWorker rather than writing inline -- await both landing
     # before the crash-recovery reload below reads either file fresh.
-    await a._flush_history_durability()
-    await b._flush_history_durability()
+    await a.flush_history()
+    await b.flush_history()
 
     # simulate crash-recovery: clear in-memory, reload each from its own durable file.
     a.history.clear()
@@ -147,8 +147,8 @@ async def test_rewind_reset_does_not_touch_other_sessions_transcript(tmp_path, m
     b._append_history(ChatMessage(role="user", content="B-msg"))
     # #6240 ③: both writes above are enqueued, not yet on disk -- await
     # them landing before reading either file fresh below.
-    await a._flush_history_durability()
-    await b._flush_history_durability()
+    await a.flush_history()
+    await b.flush_history()
     b_before = b.history_path.read_text()
 
     await a.reset_for_rewind()  # the real in-memory rewind reset for session A

@@ -117,7 +117,7 @@ async def test_load_older_conversation_history_extends_the_attached_session(
         # #6240 ③: await every write above landing before the disk-extend
         # read below (_append_history's own disk write is now enqueued
         # on a DurabilityWorker, not written inline).
-        await s._flush_history_durability()
+        await s.flush_history()
         s.history = s.history[-3:]
 
         rm = RegistryReadModel(reg)
@@ -145,7 +145,7 @@ async def test_load_older_conversation_history_targets_a_non_attached_session(
         beta = reg.get_or_load("beta")  # ...but "beta" (loaded, not attached) is the target
         _append_turns(beta, 10)
         # #6240 ③: see the other call site's own comment above.
-        await beta._flush_history_durability()
+        await beta.flush_history()
         beta.history = beta.history[-3:]
 
         rm = RegistryReadModel(reg)
@@ -180,7 +180,7 @@ async def test_load_older_conversation_history_returns_zero_at_the_true_start(
         _append_turns(s, 3)
         # #6240 ③: see test_load_older_conversation_history_extends_the_
         # attached_session's own comment above.
-        await s._flush_history_durability()
+        await s.flush_history()
         s.history = s.history[-2:]
 
         rm = RegistryReadModel(reg)

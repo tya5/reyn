@@ -72,7 +72,7 @@ async def test_rewind_past_a_bounded_prefix_extends_backward(tmp_path, monkeypat
     # #6240 ③: _append_history's own disk write is enqueued on a
     # DurabilityWorker rather than written inline -- await every write
     # above landing before the direct disk read below.
-    await s._flush_history_durability()
+    await s.flush_history()
     on_disk = s.history_path.read_text()
     for i in range(1, 11):
         assert f"turn {i}" in on_disk, f"sanity: turn {i} must be durable on disk"

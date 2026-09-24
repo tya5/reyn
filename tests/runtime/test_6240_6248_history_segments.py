@@ -240,7 +240,7 @@ async def test_clear_history_then_append_lands_in_a_visibly_fresh_segment(
     session._append_history(ChatMessage(role="user", content="post-clear"))
     # #6240 ③ follow-up: this append is enqueued (loop running) -- await
     # it landing before reading the fresh segment below.
-    await session._flush_history_durability()
+    await session.flush_history()
 
     on_disk = [
         json.loads(ln)
@@ -322,7 +322,7 @@ async def test_clear_history_disk_failure_leaves_in_memory_history_untouched(
     # intercepts the STILL-QUEUED write's own directory creation with an
     # AttributeError (no .mkdir on the fake), not the OSError this
     # witness is actually about.
-    await session._flush_history_durability()
+    await session.flush_history()
     before = list(session.history)
 
     class _FailingIterdirPath:

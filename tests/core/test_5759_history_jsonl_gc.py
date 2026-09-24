@@ -413,7 +413,7 @@ async def test_a_live_sessions_own_sealed_segment_is_gcd(tmp_path):
         # #6240 ③: the seal decision itself now runs off-loop, inside the
         # DurabilityWorker's own write job -- await it landing before
         # checking disk for a sealed segment each iteration.
-        await session._flush_history_durability()
+        await session.flush_history()
         sealed = [p for p in session.history_dir.iterdir() if p.name != "history.jsonl"]
         if sealed:
             break
@@ -436,7 +436,7 @@ async def test_a_live_sessions_own_sealed_segment_is_gcd(tmp_path):
     # below) reads the summary appended above from DISK -- await it
     # landing before GC runs, or GC sees no fold record yet and never
     # unlinks the sealed segment this test's own assertion checks.
-    await session._flush_history_durability()
+    await session.flush_history()
 
     reg._store_session(name, session)  # default sid="main"
     log = reg.state_log

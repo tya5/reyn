@@ -52,7 +52,7 @@ write is enqueued on a ``DurabilityWorker`` instead
 call moved into the worker's own off-loop job
 (``Session._write_history_record_owned``). The payer for same-turn
 read-back moved from every WRITER to the one reader that reads disk
-(``Session._flush_history_durability``, awaited by
+(``Session.flush_history``, awaited by
 ``CompactionController.force_compact_now`` immediately before its own
 disk read) — see ``tests/runtime/test_6240_3_append_history_durability_
 worker.py`` for the witnesses covering the loop-running path this file

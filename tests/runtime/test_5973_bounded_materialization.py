@@ -96,7 +96,7 @@ async def _write_one_content_ref_row(tmp_path: Path, agent_name: str, body: str)
     loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
     loop.feedback(_round(body))
     await loop.persist_feedback()
-    await session._flush_history_durability()
+    await session.flush_history()
 
 
 # ── ① eviction counts a content_ref row's real body, not its shell ──────
@@ -395,7 +395,7 @@ async def test_build_history_budget_protects_the_newest_turn_not_the_oldest(
     # (below) is a FRESH session reading the same durable store; without
     # this, its load_history() can race the still-queued disk write this
     # persist_feedback() call just enqueued.
-    await session._flush_history_durability()
+    await session.flush_history()
 
     # Cap fits roughly ONE of the two ~20,000-byte bodies, not both.
     session2 = _session(agent_name, tmp_path, max_bytes=22_000)

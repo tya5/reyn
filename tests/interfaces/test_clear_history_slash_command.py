@@ -56,11 +56,11 @@ async def _seeded_session(tmp_path: Path, *, n_turns: int = 3):
     when a loop is running (every caller here is an ``async def`` test)
     -- ``await``ing a flush here is what lets every caller below build
     on "these turns are genuinely on disk" without each one repeating
-    the same ``await session._flush_history_durability()`` call."""
+    the same ``await session.flush_history()`` call."""
     session = make_session(agent_name="alice", workspace_base_dir=tmp_path)
     for i in range(n_turns):
         session._append_history(ChatMessage(role="user", content=f"turn {i}"))
-    await session._flush_history_durability()
+    await session.flush_history()
     return session
 
 
@@ -180,7 +180,7 @@ async def test_an_append_after_clear_lands_in_a_fresh_segment(tmp_path: Path) ->
     await cmd.handler(ctx, "confirm")
 
     session._append_history(ChatMessage(role="user", content="post-clear"))
-    await session._flush_history_durability()
+    await session.flush_history()
     on_disk = [ln for ln in session.history_path.read_text().splitlines() if ln.strip()]
     assert [ln for ln in on_disk if '"content": "post-clear"' in ln], (
         "the post-clear append must be present in the active segment"

@@ -90,6 +90,12 @@ class DurabilityWorker:
         # health-signal: this latches True + a CRITICAL log. The system is no longer durably
         # persisting — a supervisor reads `durability_failed` to fail-stop. Never auto-cleared.
         self._durability_failed = False
+        # #6260: True while THIS coroutine (inside `_drain_to_empty`) is acting as the
+        # drainer itself — see that method's own docstring for why a second consumer
+        # must never run concurrently. Checked + set with no `await` between (atomic
+        # under cooperative scheduling), so a concurrent `flush`/`aclose`/`_kick` caller
+        # sees the claim before it could ever race it.
+        self._inline_draining = False
 
     def _ensure_queue(self) -> "asyncio.Queue":
         """Bind (or rebind) the queue to the RUNNING loop and return it. A new loop (a fresh test,
@@ -107,7 +113,15 @@ class DurabilityWorker:
 
     def _kick(self) -> None:
         """Start the self-terminating drainer if it is not currently running. Called AFTER the
-        item is enqueued, so the drainer is guaranteed to see it."""
+        item is enqueued, so the drainer is guaranteed to see it. #6260: a no-op while
+        `_inline_draining` is True — `flush`/`aclose` is ALREADY the sole consumer at that
+        point (see `_drain_to_empty`'s docstring); spawning a background task here too would
+        give the queue two concurrent consumers and break FIFO = durability order. The item
+        just enqueued is not stranded: `_drain`'s own no-stranding note applies unchanged —
+        either the inline drain (still looping) picks it up on its next iteration, or (if it
+        already exited) the NEXT `submit`/`submit_nowait` call re-kicks a fresh drainer."""
+        if self._inline_draining:
+            return
         if self._drainer is None or self._drainer.done():
             self._drainer = self._loop.create_task(self._drain())  # type: ignore[union-attr]
 
@@ -252,11 +266,67 @@ class DurabilityWorker:
                 )
                 attempt += 1
 
+    async def _drain_to_empty(self) -> None:
+        """#6260: the ONE shared "wait until the queue is fully drained" body used by both
+        :meth:`flush` and :meth:`aclose` — draining is never written twice.
+
+        There must be exactly ONE consumer pulling off ``_queue`` at a time (two consumers
+        would race each other's ``get_nowait``, breaking FIFO = durability order): if the
+        background drainer is alive AND not (already, or about to be) cancelled, it already IS
+        that consumer — kick it (only if idle: a queued item the ``_kick`` at the enqueue site
+        already scheduled it to drain) and wait on ``queue.join()``, exactly as before #6260.
+
+        "Alive" is checked two ways, not one, because a SINGLE ``done()`` check is stale the
+        instant it matters: ``not self._drainer.done()`` alone would still read True for a task
+        that was JUST ``.cancel()``-ed but has not yet been scheduled to actually process that
+        cancellation (Python only delivers ``CancelledError`` at the task's NEXT step) — taking
+        the "alive, just wait" branch there is exactly the #6260 hang, because that task, once
+        it IS scheduled, may terminate having drained ZERO items (a task cancelled before its
+        very first step never even reaches its own ``get_nowait`` loop) while ``join()`` sits
+        waiting on ``task_done()`` calls nobody is left to make. ``Task.cancelling() > 0``
+        (Python 3.11+, the SAME discriminator :meth:`aclose`'s own ``except CancelledError``
+        clause already uses below) is set SYNCHRONOUSLY by ``.cancel()`` — no scheduling delay
+        — so it catches this the instant it happens, not just after ``done()`` eventually
+        catches up.
+
+        If the drainer is missing / finished / cancelled / cancelling, there is no other
+        consumer left to reach the ``task_done()`` calls ``join()`` would otherwise wait on —
+        the #6260 hang: a drainer killed mid-queue (production reachable via ``AgentRegistry.
+        shutdown``'s hard-cancel, or loop teardown on ``/quit``/Ctrl-C) leaves the remaining
+        items permanently "unfinished". So THIS coroutine claims the drainer role itself and
+        drives :meth:`_drain` directly — no NEW task is created, so completing it never depends
+        on the loop being willing to schedule one more task while it may already be tearing
+        down. ``_inline_draining`` is the claim: set for the duration (with ``_kick`` refusing
+        to spawn a second consumer while it is set — see that method), so a second concurrent
+        caller sees it and falls back to ``queue.join()`` instead of draining a second time.
+        This is fail-CLOSED, not fail-open: every currently-enqueued write still drains (the
+        docstring on :meth:`flush` keeps its word) — cancellation just stops depending on a
+        task nobody may run again."""
+        assert self._queue is not None
+        drainer = self._drainer
+        if drainer is not None and not drainer.done() and drainer.cancelling() == 0:
+            if not self._queue.empty():
+                self._kick()
+            await self._queue.join()
+            return
+        if self._inline_draining:
+            await self._queue.join()
+            return
+        self._inline_draining = True
+        try:
+            await self._drain()
+        finally:
+            self._inline_draining = False
+
     async def flush(self) -> None:
         """#2259 PR-2b: wait until every currently-enqueued durable write has DRAINED — WITHOUT
         closing the worker (it stays usable). For any caller that must observe a fire-and-forget
         write's effect (e.g. a test asserting a truncate's result, or a deliberate barrier).
-        Same loop-guard as ``aclose``; a no-op if never used or called on a different loop."""
+        Same loop-guard as ``aclose``; a no-op if never used or called on a different loop.
+
+        #6260: never hangs on a drainer that died mid-queue (cancelled by something else,
+        e.g. ``AgentRegistry.shutdown``'s hard-cancel or loop teardown) — see
+        :meth:`_drain_to_empty`."""
         if self._queue is None or self._loop is None:
             return
         try:
@@ -265,16 +335,13 @@ class DurabilityWorker:
             running = None
         if running is not self._loop:
             return
-        if not self._queue.empty():
-            self._kick()
-        await self._queue.join()
+        await self._drain_to_empty()
 
     async def aclose(self) -> None:
-        """Graceful shutdown. Drain every enqueued task (no in-flight write lost), then stop. The
-        self-terminating drainer may already have exited, so KICK it if the queue is non-empty,
-        ``join`` to wait out the drain, then cancel any still-running drainer. A no-op if never
-        used, or if called on a different loop than the one the queue is bound to (a dead loop —
-        nothing to drain there)."""
+        """Graceful shutdown. Drain every enqueued task (no in-flight write lost), then stop —
+        via the SAME :meth:`_drain_to_empty` :meth:`flush` uses (#6260) — then cancel any
+        still-running drainer. A no-op if never used, or if called on a different loop than the
+        one the queue is bound to (a dead loop — nothing to drain there)."""
         if self._queue is None or self._loop is None:
             return
         try:
@@ -283,9 +350,7 @@ class DurabilityWorker:
             running = None
         if running is not self._loop:
             return
-        if not self._queue.empty():
-            self._kick()
-        await self._queue.join()
+        await self._drain_to_empty()
         if self._drainer is not None and not self._drainer.done():
             self._drainer.cancel()
             try:

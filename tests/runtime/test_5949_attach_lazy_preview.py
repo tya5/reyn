@@ -76,7 +76,7 @@ async def _write_one_content_ref_row(tmp_path: Path, agent_name: str, body: str)
     loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
     loop.feedback(_round(body))
     await loop.persist_feedback()
-    await session._flush_history_durability()
+    await session.flush_history()
 
 
 async def _write_content_ref_row_then_filler_turns(
@@ -104,7 +104,7 @@ async def _write_content_ref_row_then_filler_turns(
     # #6240 ③: see _write_one_content_ref_row's own docstring — every
     # write above is enqueued, not yet on disk, when this session is
     # discarded.
-    await session._flush_history_durability()
+    await session.flush_history()
 
 
 # ── 1. backward-paging never eager-hydrates .content ────────────────────

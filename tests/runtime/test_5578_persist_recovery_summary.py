@@ -82,7 +82,7 @@ def _drive_one_recovering_turn(
         # queued on the OLD loop, silently losing an un-drained write —
         # so drive settle() in the SAME asyncio.run() call, right after an
         # explicit flush, rather than a second asyncio.run().
-        await session._flush_history_durability()
+        await session.flush_history()
         await settle(session)
 
     try:

@@ -378,7 +378,7 @@ class CompactionController:
         #6240 ③: zero-argument async callable — ``await`` every
         ``_append_history`` write enqueued so far before this
         controller's own disk read (``history_from_disk``). Wraps
-        ``Session._flush_history_durability``. ``None`` (default) is a
+        ``Session.flush_history``. ``None`` (default) is a
         no-op, matching every other optional-collaborator degrade this
         class already has.
     """

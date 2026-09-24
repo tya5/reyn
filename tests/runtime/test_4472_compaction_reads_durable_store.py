@@ -129,7 +129,7 @@ async def _turn(session: Session, state_log: StateLog, text: str) -> int:
     # drain it. Flushing here, inside the SAME asyncio.run() call that
     # enqueued it, is what makes each turn's own durable write land
     # before this coroutine (and the loop underneath it) ever tears down.
-    await session._flush_history_durability()
+    await session.flush_history()
     return session.history[-1].meta["wal_seq"]
 
 
