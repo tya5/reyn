@@ -40,6 +40,23 @@ history_after`` RED with::
     makes a just-written line durably readable this turn.
 
 restored by re-adding ``f.flush()`` (Edit), confirmed GREEN again.
+
+#6240 ③ update (architect ruling, issue #6240 comment 5807710323): the
+synchronous "appended => durably readable, no wait" contract this file
+pins is now ONLY guaranteed when no event loop is running at append time
+(this file's own test functions are plain ``def``, so that is exactly
+the path they exercise — ``Session._append_history`` falls back to
+writing inline). When a loop IS running (every real chat turn), the disk
+write is enqueued on a ``DurabilityWorker`` instead
+(``submit_nowait`` — fire-and-forget) and this file's own ``f.flush()``
+call moved into the worker's own off-loop job
+(``Session._write_history_record_owned``). The payer for same-turn
+read-back moved from every WRITER to the one reader that reads disk
+(``Session._flush_history_durability``, awaited by
+``CompactionController.force_compact_now`` immediately before its own
+disk read) — see ``tests/runtime/test_6240_3_append_history_durability_
+worker.py`` for the witnesses covering the loop-running path this file
+does not exercise.
 """
 from __future__ import annotations
 

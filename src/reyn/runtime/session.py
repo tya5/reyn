@@ -1693,6 +1693,20 @@ class Session:
         # docstring, and #6248's own review for why this replaces #6247's
         # liveness gate rather than narrowing its window).
         self._history_append_fh: "Any" = None
+        # #6240 ③ (architect ruling, issue #6240 comment 5807710323): a
+        # DEDICATED worker for history's own durable writes — same
+        # rationale ``MediaStore.__init__`` gives for its own dedicated
+        # (not session-shared) worker: history's writes have no ordering
+        # dependency on the WAL's or on MediaStore's own writes, so a
+        # separate serialization point keeps the substrates decoupled.
+        # ``submit_threadsafe`` is deliberately NEVER used against this
+        # worker (unlike ``MediaStore``'s): investigation for #6240 ③
+        # traced every ``_append_history`` call site after ④ landed
+        # (#6259) and found none left running on a worker thread — ④'s
+        # own fix (``spill_turn_content`` returns its record instead of
+        # appending it) was what closed the last one.
+        from reyn.core.events.durability_worker import DurabilityWorker
+        self._history_durability_worker = DurabilityWorker()
         self.events_dir = (  # PR20: audit events dir, created lazily by EventStore on first write
             # #3705: anchored on the same root as workspace_dir — was a bare
             # relative `Path(".reyn")`, silently ignoring workspace_state_dir.
@@ -4463,33 +4477,88 @@ class Session:
         # #5851 issue thread: "durable な行が一度も過大な content を持たない
         # ことを witness する"). Mutates msg.content/msg.meta in place.
         self._enforce_per_message_content_cap(msg)
+        # #6240 ③ (architect ruling, issue #6240 comment 5807710323):
+        # session-STATE mutation — the seq assignment above, and this
+        # resident append — stays HERE, synchronous, on whatever thread
+        # calls this method (today: only the loop — see ④'s own
+        # ``SpillTurnResult`` fix, which stopped a worker thread from ever
+        # reaching this method at all). Every RESIDENT reader this arc
+        # traced (``RouterHistoryBuffer._spill_supersede_map`` /
+        # ``is_already_spilled``, ``build_history``,
+        # ``decompose_history_for_retry`` — all via ``Session.
+        # _active_branch_history``, this same ``self.history`` list) sees
+        # this append immediately, with no ``flush()`` to await: they read
+        # RESIDENT memory, never disk.
         self.history.append(msg)
         # #5896 (#5364 §1.1 "A"): the durable line is ``history_record``'s
         # form, not ``asdict`` — an un-spilled tool row's body stays on the
         # resident ``msg`` above and is NOT written here (its file under
-        # history-content/ already is; see that function's docstring). The
-        # one ``json.dumps`` of a tool body on the loop is gone with it.
-        # #6077 提案 1: write through the session-lifetime handle, not a
-        # fresh ``open``/``close`` per message (see ``_history_append_fh``'s
-        # own docstring on ``__init__`` for why). ``flush()`` is NOT
-        # optional here — ``close()`` used to be what made a just-appended
-        # line visible to a same-turn read-back; without an explicit
-        # ``flush()`` a buffered line would stay invisible to a reader
-        # opening the file fresh (``_durable_active_history_after``,
-        # ``force_compact_now``'s compaction path) until Python's own
-        # buffer happened to fill or the process exited — silently
-        # breaking the synchronous "appended ⇒ readable" contract every
-        # caller of ``_append_history`` relies on.
+        # history-content/ already is; see that function's docstring).
+        # Captured HERE, on the loop (mirrors ``EventStore.write``'s own
+        # ``model_dump`` capture, #6077 提案 3/6) — ``history_record``'s own
+        # docstring establishes it is a pure derivation (an ``asdict`` plus
+        # one conditional field drop), never mutating ``msg``, so the dict
+        # below is a frozen snapshot of THIS moment even though the actual
+        # write happens later, off-loop.
+        record = history_record(msg)
+        seq = msg.seq
+        role = msg.role
+        # #6240 ③: the disk write — seal-check, the durable line's own
+        # ``json.dumps``, the handle write + ``flush()``, and the active-
+        # segment bookkeeping the NEXT seal reads — moves OFF the loop as
+        # ONE unit via :class:`DurabilityWorker`, mirroring ``EventStore.
+        # _write_owned``'s own precedent (#6077 提案 3/6 ruling: rotation's
+        # own byte/date judgment moves with the write it decides for, or
+        # the loop is still "judging" file state while the worker
+        # "writes" — the exact split that ruling rejected). See
+        # :meth:`_write_history_record_owned` for the off-loop body.
         #
-        # #6248 ③: check-then-seal BEFORE this write, not after — "自分の
-        # write の直前に rename" (architect design). Sealing here (not in
-        # a background pass) is what makes it O(1) and race-free: nobody
-        # else can observe or act on the boundary crossing between this
-        # check and the write that follows it, because ``_append_history``
-        # itself is synchronous end-to-end.
+        # This trades away the OLD synchronous "appended ⇒ durably
+        # readable" contract for ``_durable_active_history_after`` (the
+        # ONE reader that reads DISK, not resident memory) — architect's
+        # ruling puts the cost on that reader instead: it now awaits
+        # :meth:`_flush_history_durability` immediately before its own
+        # disk read (``force_compact_now``, compaction_controller.py).
+        #
+        # No-running-loop fallback (mirrors ``EventStore.write`` /
+        # ``MediaStore._submit_write_or_inline``): ``submit_nowait``
+        # requires a bound loop; a sync caller (a script, a sync test)
+        # writes inline instead — byte-identical to this method's
+        # pre-#6240-③ behaviour for that case.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._write_history_record_owned(seq, record, role)
+        else:
+            self._history_durability_worker.submit_nowait(
+                lambda: self._do_write_history_record(seq, record, role)
+            )
+        self._evict_oldest_resident_entries()
+        self._update_untrusted_taint_on_append(msg)
+
+    def _write_history_record_owned(self, seq: int, record: dict, role: str) -> None:
+        """SOLE owner of "does the active segment need sealing, and what
+        are this line's bytes" for ONE :meth:`_append_history` call
+        (#6240 ③, architect ruling — mirrors ``EventStore._write_owned``,
+        #6077 提案 3/6) — invoked either directly (the no-running-loop
+        sync fallback) or off-loop via :meth:`_do_write_history_record`
+        (the normal, loop-running path).
+
+        ``seq``/``record``/``role`` are plain, already-captured values —
+        never the live ``ChatMessage`` — so nothing here can observe a
+        LATER mutation of the message that produced them (the same
+        capture/durability split ``EventStore.write``'s own docstring
+        argues for ``model_dump``/``dumps``).
+
+        #6248 ③: check-then-seal BEFORE the write, not after — moved here
+        UNCHANGED from :meth:`_append_history`'s own pre-#6240-③ body:
+        the seal decision and the write it guards must stay ONE owner
+        (this method), never split across loop (seal) and worker (write)
+        — the exact split #6077 提案 3/6's own ruling rejected for
+        ``EventStore``'s rotation."""
         self._maybe_seal_active_history_segment()
         f = self._history_append_handle()
-        f.write(json.dumps(history_record(msg), ensure_ascii=False) + "\n")
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
         f.flush()
         # #6248 ②: record this write against the ACTIVE segment's own
         # running facts — what the NEXT seal (above, on a future call)
@@ -4497,12 +4566,31 @@ class Session:
         # successful write, so a flush that raises never claims content
         # that didn't actually land on disk.
         if self._active_segment_min_seq is None:
-            self._active_segment_min_seq = msg.seq
-        self._active_segment_max_seq = msg.seq
-        if msg.role == "summary":
+            self._active_segment_min_seq = seq
+        self._active_segment_max_seq = seq
+        if role == "summary":
             self._active_segment_has_summary = True
-        self._evict_oldest_resident_entries()
-        self._update_untrusted_taint_on_append(msg)
+
+    async def _do_write_history_record(self, seq: int, record: dict, role: str) -> None:
+        """The ``DurableWrite`` job :meth:`_append_history` hands
+        ``DurabilityWorker.submit_nowait`` — runs :meth:`_write_history_
+        record_owned` off the loop (mirrors ``EventStore._do_write``,
+        #6077 提案 3/6)."""
+        await asyncio.to_thread(self._write_history_record_owned, seq, record, role)
+
+    async def _flush_history_durability(self) -> None:
+        """Wait until every :meth:`_append_history` write enqueued so far
+        has actually landed on disk (mirrors ``EventStore.flush`` /
+        ``MediaStore.flush``). #6240 ③ (architect ruling): the ONE payer
+        for the same-turn read-back ``_append_history`` used to guarantee
+        synchronously — a reader that needs to see a just-appended line on
+        DISK (today: only ``Session._durable_active_history_after``, via
+        ``force_compact_now``) awaits this immediately before its own
+        read. A RESIDENT reader (``self.history`` — ``build_history``,
+        ``is_already_spilled``, etc.) needs no call here at all: the
+        resident append in :meth:`_append_history` is still synchronous,
+        unchanged by ③."""
+        await self._history_durability_worker.flush()
 
     def _maybe_seal_active_history_segment(self) -> None:
         """#6240/#6248 ②③: seal the CURRENT active segment (rename it to a
@@ -5084,7 +5172,12 @@ class Session:
         residency-gated, so #4387's byte cap can never make compaction
         blind to content it hasn't actually summarized (#4470's own root
         cause: ``self.history`` is a byte-capped CACHE, not the source of
-        truth). Returns ``(turns, truncated)`` — ``truncated=True`` means
+        truth). #6240 ③: this method itself does not (and, running off
+        the loop via ``asyncio.to_thread``, cannot) await anything — the
+        caller (``CompactionController.force_compact_now``) awaits
+        :meth:`_flush_history_durability` immediately BEFORE dispatching
+        this read, so what lands here already reflects every append made
+        so far. Returns ``(turns, truncated)`` — ``truncated=True`` means
         more qualifying content exists past what was returned; the caller
         (``CompactionController``) must only ever claim coverage up to the
         highest seq it ACTUALLY examined this pass, never the theoretical
@@ -7366,6 +7459,9 @@ class Session:
             # own docstring for why (#4470's root cause fixed structurally
             # rather than papered over with the #4471 skip-branch).
             history_from_disk=self._durable_active_history_after,
+            # #6240 ③: awaited immediately before the disk read above —
+            # see this controller's own docstring on the param.
+            history_durability_flush=self._flush_history_durability,
             latest_summary=self._latest_summary,
             # #5939 PR-4: lets force_compact_now refuse rather than derive
             # a wrong prev_cover from a hydration read this session's own
@@ -9342,7 +9438,11 @@ class Session:
         The atomic unit architect's design calls unbreakable — history
         append, journal consume (SSoT prune + WAL tombstone), and the
         sent-queue "1 delta" promote — all three, or none. All three are
-        synchronous in practice (``_append_history`` is a plain file write;
+        synchronous in practice (``_append_history`` mutates ``self.
+        history`` and enqueues its disk write via ``DurabilityWorker.
+        submit_nowait`` — #6240 ③ — both plain, non-``await``ing calls, so
+        no suspension point opens here even though the actual disk write
+        now happens later, off-loop;
         ``SnapshotJournal.consume_inbox`` is ``async def`` for call-site
         symmetry but never actually suspends — see its own docstring;
         ``EventLog.emit`` is a plain call), so — mirroring
@@ -10288,6 +10388,16 @@ class Session:
             try:
                 await self._drain_on_shutdown()
             finally:
+                # #6240 ③: drain every enqueued history write BEFORE
+                # closing the handle below — mirrors ``EventStore.
+                # aclose()`` (drain-then-close). Without this, a write
+                # still queued at shutdown could either land after the
+                # handle it needs is gone (reopening a fresh one the
+                # active-segment bookkeeping never saw) or be silently
+                # dropped entirely by loop teardown — the same class of
+                # tail-loss ``EventStore.aclose``'s own docstring names
+                # for a plain ``/quit``.
+                await self._history_durability_worker.flush()
                 # #6077 提案 1: close the session-lifetime history.jsonl
                 # append handle right at this session's own end-of-life
                 # point — an un-closed handle here is exactly the failure

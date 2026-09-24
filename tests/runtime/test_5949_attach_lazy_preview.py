@@ -65,11 +65,18 @@ def _session(agent_name: str, tmp_path: Path, **kwargs):
 async def _write_one_content_ref_row(tmp_path: Path, agent_name: str, body: str) -> None:
     """Writes ONE real content_ref tool row via the production seam, then
     discards the session object — only the durable history.jsonl + its
-    history-content file matter to the tests below, which reload fresh."""
+    history-content file matter to the tests below, which reload fresh.
+
+    #6240 ③: ``_append_history``'s own disk write is now enqueued on a
+    ``DurabilityWorker`` rather than written inline — this helper
+    discards ``session`` right after, with no ``session.run()`` teardown
+    to drain it, so a fresh session's own ``load_history()``/backward-page
+    read below could otherwise race the still-queued write."""
     session = _session(agent_name, tmp_path)
     loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
     loop.feedback(_round(body))
     await loop.persist_feedback()
+    await session._flush_history_durability()
 
 
 async def _write_content_ref_row_then_filler_turns(
@@ -94,6 +101,10 @@ async def _write_content_ref_row_then_filler_turns(
     for i in range(n_filler_turns):
         session._append_history(ChatMessage(role="user", content=f"filler question {i}"))  # noqa: SLF001 - real durable-write seam, same as test_5139c's own helper
         session._append_history(ChatMessage(role="assistant", content=f"filler answer {i}"))  # noqa: SLF001
+    # #6240 ③: see _write_one_content_ref_row's own docstring — every
+    # write above is enqueued, not yet on disk, when this session is
+    # discarded.
+    await session._flush_history_durability()
 
 
 # ── 1. backward-paging never eager-hydrates .content ────────────────────

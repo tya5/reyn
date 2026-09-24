@@ -68,13 +68,25 @@ def _drive_one_recovering_turn(
 
     stub = LLMStub()
     stub.install()
-    try:
-        asyncio.run(
-            session._loop_driver._run_with_shrink(
-                loop, "continue please", chain_id="c1",
-            )
+
+    async def _drive() -> None:
+        await session._loop_driver._run_with_shrink(
+            loop, "continue please", chain_id="c1",
         )
-        asyncio.run(settle(session))
+        # #6240 ③: the recovery's own summary append (inside
+        # _run_with_shrink, under a running loop) enqueues its disk write
+        # on Session's history DurabilityWorker rather than writing
+        # inline. A SEPARATE asyncio.run(settle(session)) call below would
+        # bind a FRESH loop, and DurabilityWorker.submit_nowait's own
+        # rebind-on-new-loop (_ensure_queue) drops whatever was still
+        # queued on the OLD loop, silently losing an un-drained write —
+        # so drive settle() in the SAME asyncio.run() call, right after an
+        # explicit flush, rather than a second asyncio.run().
+        await session._flush_history_durability()
+        await settle(session)
+
+    try:
+        asyncio.run(_drive())
     finally:
         stub.restore()
     return events

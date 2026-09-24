@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
@@ -374,6 +374,13 @@ class CompactionController:
     render_summary:
         Callable ``(structured: dict) -> str`` that renders a structured
         summary dict to a storage-friendly text blob.
+    history_durability_flush:
+        #6240 ③: zero-argument async callable — ``await`` every
+        ``_append_history`` write enqueued so far before this
+        controller's own disk read (``history_from_disk``). Wraps
+        ``Session._flush_history_durability``. ``None`` (default) is a
+        no-op, matching every other optional-collaborator degrade this
+        class already has.
     """
 
     def __init__(
@@ -399,6 +406,16 @@ class CompactionController:
         # and any construction predating PR-4) — byte-identical to before
         # this parameter existed.
         history_load_truncated_unsafe: "Callable[[], bool] | None" = None,
+        # #6240 ③ (architect ruling, issue #6240 comment 5807710323): the
+        # payer for the same-turn read-back ``_append_history`` used to
+        # guarantee synchronously, now that its own disk write is
+        # deferred to a ``DurabilityWorker``. Awaited immediately before
+        # THIS controller's own disk read (``history_from_disk``, above —
+        # the only reader in this class that reads disk rather than
+        # resident memory). None (default) -> no-op, matching every other
+        # optional-collaborator degrade this class already has (a test
+        # double with no durable-write deferral needs no flush point).
+        history_durability_flush: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         self._events = event_log
         self._config = config
@@ -412,6 +429,7 @@ class CompactionController:
         self._render_summary = render_summary
         self._compacting: bool = False
         self._history_load_truncated_unsafe = history_load_truncated_unsafe
+        self._history_durability_flush = history_durability_flush
 
     @property
     def is_compacting(self) -> bool:
@@ -741,8 +759,11 @@ class CompactionController:
         to history mid-compaction. Cross-driver turn serialization is now
         structural — every transport that drives ``run_one_iteration`` holds the
         shared per-agent lock (PR-b, ``reyn.runtime.agent_locks``), and within a
-        turn ``_append_history`` is synchronous — so no concurrent append can
-        land during this method. If the single pass under-shoots (the guard's
+        turn ``_append_history``'s own session-state mutation (``self.history.
+        append`` + the seq assignment) is synchronous — so no concurrent append
+        can land during this method (#6240 ③: only its DISK write moved
+        off-loop, via ``DurabilityWorker.submit_nowait`` — the state mutation
+        this paragraph is about is unchanged). If the single pass under-shoots (the guard's
         estimate under-counted), the ``retry_loop`` overflow backstop in
         ``_run_router_loop`` folds raw_middle and monotonically shrinks: that is
         the under-shoot floor, replacing the multi-pass-or-raise contract.
@@ -797,6 +818,16 @@ class CompactionController:
         # ever reflects what THIS batch actually contained — surfaced on
         # the audit trail so a capped-batch pass is distinguishable from
         # "there was genuinely nothing more to compact."
+        # #6240 ③ (architect ruling): this is the SAME-TURN read-back
+        # ``_append_history``'s own docstring used to guarantee
+        # synchronously — a just-appended line's disk write may still be
+        # queued on the history ``DurabilityWorker`` when we get here.
+        # Await it landing BEFORE the disk read below, so this candidate
+        # set never silently misses the most recent append (the payer is
+        # this reader, per architect's ruling — not every writer, on
+        # every call).
+        if self._history_durability_flush is not None:
+            await self._history_durability_flush()
         # #5898: off the loop — reads up to a batch of history.jsonl, parses
         # every line and (since #5896) hydrates each tool body from its
         # file: O(history bytes) disk + CPU work that used to run on the

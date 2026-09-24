@@ -79,11 +79,24 @@ async def _write_one_content_ref_row(tmp_path: Path, agent_name: str, body: str)
     """Writes ONE real content_ref tool row via the production seam, then
     discards the session — only the durable history.jsonl + its
     history-content file matter to the tests below, which reload fresh
-    with their OWN (often much smaller) ``max_bytes``."""
+    with their OWN (often much smaller) ``max_bytes``.
+
+    #6240 ③: ``persist_feedback``'s own ``_append_history`` call now
+    enqueues its disk write on a ``DurabilityWorker`` (fire-and-forget)
+    instead of writing it inline — this helper discards ``session``
+    (and its worker) right after, with no ``session.run()`` teardown to
+    drain it (production's own payer for that, #6240 ③). Without this
+    ``await``, the fresh session each test below constructs can call
+    ``load_history()`` before the write actually lands on disk — a
+    same-turn read-back this helper's own caller relies on, same class
+    architect's #6240 ③ ruling names for ``_durable_active_history_
+    after``, just via a different reader (a FRESH session's own
+    startup hydration instead of the compaction read path)."""
     session = _session(agent_name, tmp_path)
     loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
     loop.feedback(_round(body))
     await loop.persist_feedback()
+    await session._flush_history_durability()
 
 
 # ── ① eviction counts a content_ref row's real body, not its shell ──────
@@ -378,6 +391,11 @@ async def test_build_history_budget_protects_the_newest_turn_not_the_oldest(
     loop = RouterLoop(host=session.router_host, chain_id="c2", router_model=_MODEL)
     loop.feedback(_round("NEW" + _BODY))
     await loop.persist_feedback()
+    # #6240 ③: see _write_one_content_ref_row's own docstring — session2
+    # (below) is a FRESH session reading the same durable store; without
+    # this, its load_history() can race the still-queued disk write this
+    # persist_feedback() call just enqueued.
+    await session._flush_history_durability()
 
     # Cap fits roughly ONE of the two ~20,000-byte bodies, not both.
     session2 = _session(agent_name, tmp_path, max_bytes=22_000)
