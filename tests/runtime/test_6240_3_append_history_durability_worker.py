@@ -31,7 +31,22 @@ the worker's own ``flush()``.
 
 Strip-falsify performed in-file via Edit -> observe RED -> Edit back
 (``git checkout``/``stash``/``restore`` never used, CLAUDE.md) for all
-three witnesses; RED text recorded verbatim in each test's own docstring.
+witnesses; RED text recorded verbatim in each test's own docstring.
+
+#6240 ③ follow-up (architect ruling, PR #6260 comment 5808618887):
+deferring ``_append_history``'s write onto the worker reintroduces the
+EXACT defect class #6257 closed for ``/clear-history`` -- a write still
+QUEUED (not yet on disk) when ``Session.clear_history()`` deletes
+``history_dir`` and opens a fresh active segment could otherwise land in
+that fresh segment, silently un-clearing what the user just asked to
+clear. Fixed by making ``clear_history`` ``async def`` and awaiting
+:meth:`Session._flush_history_durability` as its FIRST step (see that
+method's own docstring for the full 5-step order). Witnesses ④/⑤ below
+cover this pair (deny: the queued write does NOT survive into the fresh
+segment; present, the sibling positive control: the SAME queued write
+DOES land when ``clear_history`` is never called -- without the sibling,
+the deny side could pass vacuously in a world where the queue was
+already empty).
 """
 from __future__ import annotations
 
@@ -196,4 +211,75 @@ async def test_durable_active_history_after_sees_a_just_appended_line_once_flush
         "sanity: 3 short turns must never trip the batch-read truncation "
         "flag -- a True here would mean the read itself, not the flush "
         "contract, is what this assertion is (accidentally) exercising"
+    )
+
+
+@pytest.mark.asyncio
+async def test_clear_history_flushes_a_queued_write_before_deleting_it(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: witness ④ (deny) -- a history write still QUEUED (not yet
+    on disk) when ``Session.clear_history()`` runs must NOT survive into
+    the fresh active segment ``clear_history`` opens. ``_append_history``
+    is called with NO ``await`` before ``clear_history()`` -- the queued
+    job is still pending (per asyncio's own cooperative scheduling, see
+    module docstring) when ``clear_history``'s own step 0 flush runs,
+    landing the write in the OLD (about-to-be-deleted) segment instead of
+    the fresh one.
+
+    Strip-falsify: temporarily moved the
+    ``await self._flush_history_durability()`` call from the TOP of
+    ``Session.clear_history`` (session.py) to AFTER the fresh-segment
+    reopen (the wrong-order defect this witness exists to catch --
+    simply DELETING the call instead leaves the drain task with no
+    ``await`` point in this coroutine's own body to ever run at, which
+    would make this assertion pass vacuously regardless of ordering, not
+    exercise the real hazard). Observed RED (verbatim, ``ts`` value
+    elided as ``...``)::
+
+        AssertionError: a write still queued when clear_history() ran
+        must NOT survive into the fresh active segment -- got
+        '{"role": "user", "content": "queued-before-clear", "ts": "...",
+        "seq": 1, "meta": {"wal_seq": 0}, "tool_calls": null,
+        "tool_call_id": null, "name": null, "spillability":
+        "last_resort", "disclosure": null, "kind": "unspecified"}\\n'
+        instead of ''. If this failed, clear_history() stopped flushing
+        the history worker before deleting history_dir.
+        assert '{"role": "us...specified"}\\n' == ''
+
+    Reverted immediately after observing (restored the flush call at the
+    top); confirmed GREEN again."""
+    session = _session(tmp_path)
+
+    session._append_history(ChatMessage(role="user", content="queued-before-clear", ts=_now()))
+    await session.clear_history()
+
+    on_disk = session.history_path.read_text() if session.history_path.exists() else ""
+    assert on_disk == "", (
+        "a write still queued when clear_history() ran must NOT survive "
+        f"into the fresh active segment -- got {on_disk!r} instead of ''. "
+        "If this failed, clear_history() stopped flushing the history "
+        "worker before deleting history_dir."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_queued_write_lands_normally_without_a_clear(tmp_path: Path) -> None:
+    """Tier 2: witness ⑤ (present) -- the sibling positive control for
+    witness ④ above. The SAME queue-then-flush shape, but
+    ``clear_history()`` is never called: the queued write DOES land, on
+    the (still original) active segment. Without this sibling, witness
+    ④'s deny assertion could pass vacuously in a world where the queue
+    was already empty (e.g. a broken dispatch that never enqueues
+    anything at all)."""
+    session = _session(tmp_path)
+
+    session._append_history(ChatMessage(role="user", content="queued-no-clear", ts=_now()))
+    await session._flush_history_durability()
+
+    on_disk = session.history_path.read_text()
+    assert "queued-no-clear" in on_disk, (
+        "the SAME queued write must land normally when clear_history() is "
+        f"never called -- got {on_disk!r} instead of content containing "
+        "'queued-no-clear'"
     )

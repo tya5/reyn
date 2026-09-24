@@ -57,11 +57,16 @@ class _FakeSession:
         self._fail_disk = fail_disk
         self._outbox: list[OutboxMessage] = []
 
-    def clear_history(self) -> int:
+    async def clear_history(self) -> int:
         """Minimal stand-in for ``Session.clear_history`` — same contract
         (raise before touching ``history`` on a disk failure; otherwise
         clear ``history`` and return the pre-clear count), no real
-        filesystem involved."""
+        filesystem involved. ``async def`` since #6240 ③ follow-up (PR
+        #6260 comment 5808618887) made the real method ``async`` too
+        (it awaits its own history-durability-worker flush first) —
+        this fake carries no worker to flush, so the body stays
+        synchronous logic under an ``async def`` signature, matching the
+        real method's call-site contract without reintroducing one."""
         if self._fail_disk:
             raise OSError("permission denied")
         n_before = len(self.history) if isinstance(self.history, list) else 0

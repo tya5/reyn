@@ -331,13 +331,26 @@ async def test_the_witness_tool_actually_runs_when_permitted(
     reg = _registry(tmp_path, scripted)
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    spawner, _sid = await _narrowed_spawner(reg, {"tool_deny": ["some_unrelated_tool"]})
-    await _spawn_via_tool(spawner, reg, state_log, scripted, narrowing=None)
+    try:
+        spawner, _sid = await _narrowed_spawner(reg, {"tool_deny": ["some_unrelated_tool"]})
+        await _spawn_via_tool(spawner, reg, state_log, scripted, narrowing=None)
 
-    assert _written(tmp_path), (
-        "the spawned child's write_file never executed even with nothing narrowing it "
-        "— the two acceptance legs below would be vacuous"
-    )
+        assert _written(tmp_path), (
+            "the spawned child's write_file never executed even with nothing narrowing it "
+            "— the two acceptance legs below would be vacuous"
+        )
+    finally:
+        # #6240 ③ CI finding: the spawned child is a REAL "persistent"-mode
+        # Session.run() task -- without this, it leaks past this test's own
+        # teardown into whichever asyncio.Runner eventually closes (this
+        # file's own last test, or another file sharing the loop),
+        # accumulating one leaked run() task (plus its own history
+        # DurabilityWorker drain task, #6240 ③'s own new addition) per
+        # narrowing test in this file that omitted this. AgentRegistry.
+        # shutdown()'s own docstring is the designed exit for exactly this
+        # shape (cooperative-then-hard-cancel, never hangs) -- the same
+        # pattern test_5949_attach_lazy_preview.py's own tests already use.
+        await reg.shutdown()
 
 
 # ── leg 1: the spawner's deny survives an LLM-requested allow-list ────────────
@@ -361,15 +374,20 @@ async def test_spawner_deny_survives_an_llm_requested_allow_list(
     reg = _registry(tmp_path, scripted)
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    spawner, _sid = await _narrowed_spawner(reg, {"tool_deny": [_WITNESS_TOOL]})
-    ack = await _spawn_via_tool(
-        spawner, reg, state_log, scripted, narrowing={"tool_allow": [_WITNESS_TOOL]},
-    )
+    try:
+        spawner, _sid = await _narrowed_spawner(reg, {"tool_deny": [_WITNESS_TOOL]})
+        ack = await _spawn_via_tool(
+            spawner, reg, state_log, scripted, narrowing={"tool_allow": [_WITNESS_TOOL]},
+        )
 
-    assert not _written(tmp_path), (
-        "a tool the SPAWNER's per-session narrowing denied executed its real side "
-        f"effect in a session that spawner spawned for itself (ack: {ack!r})"
-    )
+        assert not _written(tmp_path), (
+            "a tool the SPAWNER's per-session narrowing denied executed its real side "
+            f"effect in a session that spawner spawned for itself (ack: {ack!r})"
+        )
+    finally:
+        # #6240 ③ CI finding: see test_the_witness_tool_actually_runs_when_
+        # permitted's own comment above -- same leaked-session shape.
+        await reg.shutdown()
 
 
 # ── leg 2: the ⊤ rule — the spawner's allow-list survives ─────────────────────
@@ -392,15 +410,20 @@ async def test_spawner_allow_list_survives_an_llm_requested_narrowing(
     reg = _registry(tmp_path, scripted)
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
 
-    spawner, _sid = await _narrowed_spawner(
-        reg, {"tool_allow": [_OTHER_TOOL, _SPAWN_TOOL]},
-    )
-    ack = await _spawn_via_tool(
-        spawner, reg, state_log, scripted,
-        narrowing={"tool_deny": ["some_unrelated_tool"]},
-    )
+    try:
+        spawner, _sid = await _narrowed_spawner(
+            reg, {"tool_allow": [_OTHER_TOOL, _SPAWN_TOOL]},
+        )
+        ack = await _spawn_via_tool(
+            spawner, reg, state_log, scripted,
+            narrowing={"tool_deny": ["some_unrelated_tool"]},
+        )
 
-    assert not _written(tmp_path), (
-        "a tool OUTSIDE the spawner's tool_allow executed its real side effect in a "
-        f"session that spawner spawned, having asked only for a deny (ack: {ack!r})"
-    )
+        assert not _written(tmp_path), (
+            "a tool OUTSIDE the spawner's tool_allow executed its real side effect in a "
+            f"session that spawner spawned, having asked only for a deny (ack: {ack!r})"
+        )
+    finally:
+        # #6240 ③ CI finding: see test_the_witness_tool_actually_runs_when_
+        # permitted's own comment above -- same leaked-session shape.
+        await reg.shutdown()

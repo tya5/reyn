@@ -89,6 +89,9 @@ async def test_eviction_fires_on_cap_exceed_oldest_first(tmp_path, monkeypatch):
         "the newest entry must always stay resident"
     )
     # Everything on disk is durable regardless of what got evicted.
+    # #6240 ③: await every write above landing before the direct disk
+    # read below.
+    await s._flush_history_durability()
     on_disk = s.history_path.read_text()
     for i in range(50):
         assert f"turn {i} " in on_disk, f"turn {i} must remain durable on disk"

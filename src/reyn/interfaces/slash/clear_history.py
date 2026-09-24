@@ -89,7 +89,11 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
         return
 
     try:
-        n_turns_before = clear_op()
+        # #6240 ③ follow-up (PR #6260 comment 5808618887): Session.
+        # clear_history is now `async def` — it awaits its own history
+        # DurabilityWorker flush BEFORE deleting history_dir (see that
+        # method's own docstring, step 0).
+        n_turns_before = await clear_op()
     except OSError as exc:
         history_dir = getattr(ctx.session, "history_dir", None)
         await reply_error(

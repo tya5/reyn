@@ -192,6 +192,13 @@ async def test_real_eviction_never_reserializes_a_still_resident_message(
     for i in range(n_appends):
         s._append_history(ChatMessage(role="user", content=f"turn {i}"))
 
+    # #6240 ③: the durable-write line's own json.dumps (the "+n_appends"
+    # half of this count) now runs OFF-LOOP, inside the DurabilityWorker's
+    # own write job -- await every write above actually landing before
+    # counting calls, or this assertion under-counts (it would still be
+    # counting resident_bytes()'s n_appends calls, but 0 of the n_appends
+    # durable-write calls that hadn't run yet).
+    await s._flush_history_durability()
     assert calls[0] == 2 * n_appends, (
         f"expected exactly {2 * n_appends} real json.dumps calls "
         f"({n_appends} from resident_bytes(), one per distinct message, "

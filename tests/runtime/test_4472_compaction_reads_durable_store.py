@@ -119,6 +119,17 @@ def _script_compaction_llm(monkeypatch, captured_new_turn_seqs: list) -> None:
 async def _turn(session: Session, state_log: StateLog, text: str) -> int:
     await state_log.append("step_completed")
     session._append_history(ChatMessage(role="user", content=text, ts=_now()))
+    # #6240 ③: every call site below drives this via its OWN
+    # `asyncio.run(_turn(...))` -- a SEPARATE loop each call.
+    # DurabilityWorker.submit_nowait's own rebind-on-new-loop
+    # (`_ensure_queue`) drops whatever was still queued on the OLD loop
+    # when the NEXT asyncio.run() rebinds it (#6261) -- so a write left
+    # queued when THIS asyncio.run() call ends could be silently lost
+    # before the next turn's own asyncio.run() ever gets a chance to
+    # drain it. Flushing here, inside the SAME asyncio.run() call that
+    # enqueued it, is what makes each turn's own durable write land
+    # before this coroutine (and the loop underneath it) ever tears down.
+    await session._flush_history_durability()
     return session.history[-1].meta["wal_seq"]
 
 

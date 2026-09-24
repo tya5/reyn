@@ -410,6 +410,10 @@ async def test_a_live_sessions_own_sealed_segment_is_gcd(tmp_path):
     big = "x" * (seg_boundary // 4)
     while True:
         session._append_history(ChatMessage(role="user", content=big))
+        # #6240 ③: the seal decision itself now runs off-loop, inside the
+        # DurabilityWorker's own write job -- await it landing before
+        # checking disk for a sealed segment each iteration.
+        await session._flush_history_durability()
         sealed = [p for p in session.history_dir.iterdir() if p.name != "history.jsonl"]
         if sealed:
             break
@@ -428,6 +432,11 @@ async def test_a_live_sessions_own_sealed_segment_is_gcd(tmp_path):
     ))
     for _ in range(_HISTORY_HYDRATE_MIN_LINES + 5):
         session._append_history(ChatMessage(role="user", content="pad"))
+    # #6240 ③: GC's own fold-coverage scan (below, via _prune_generations_
+    # below) reads the summary appended above from DISK -- await it
+    # landing before GC runs, or GC sees no fold record yet and never
+    # unlinks the sealed segment this test's own assertion checks.
+    await session._flush_history_durability()
 
     reg._store_session(name, session)  # default sid="main"
     log = reg.state_log

@@ -4690,7 +4690,7 @@ class Session:
                 self.agent_name, exc_info=True,
             )
 
-    def clear_history(self) -> int:
+    async def clear_history(self) -> int:
         """Wipe this session's chat history, in-memory AND on disk, and
         resume appending into a FRESH active segment. Returns the number
         of turns cleared (``len(self.history)`` as it stood before this
@@ -4716,9 +4716,46 @@ class Session:
         transport has no access to that handle, so it cannot safely
         delete ``history_dir`` at all while this session is live.
 
-        ⭐ **Order is the invariant — do not reorder these 4 steps**:
+        #6240 ③ follow-up (architect ruling, PR #6260 comment 5808618887):
+        ``async def`` since this PR — ``Session._append_history``'s own
+        disk write is now deferred onto ``DurabilityWorker.submit_nowait``
+        (fire-and-forget), so a write enqueued by a turn just before
+        ``/clear-history confirm`` runs could still be QUEUED, not yet on
+        disk, at the moment step 2 below deletes ``history_dir`` — and
+        would then land in the FRESH (step 3) segment this call itself
+        just created, silently un-clearing the very thing the user asked
+        to clear (the #6257-closed "`/clear` lies" defect class,
+        reintroduced by THIS design if left unaddressed — architect
+        explicitly rejected deferring this to a separate PR on exactly
+        that ground). Fixed by a NEW step 0 — see below. The architect
+        rejected an alternative (capturing the write's destination file
+        at ENQUEUE time, so a post-clear execution lands in an orphaned,
+        harmless inode instead) as a new handle-lifetime problem, the
+        same class of small-trick #6247/#6251 already ruled against
+        twice — flushing first, so nothing is left queued to land
+        anywhere, is the more direct fix.
 
-        1. **Close the handle first.** ``run()``'s own teardown already
+        ⭐ **Order is the invariant — do not reorder these 5 steps**:
+
+        0. **Await every history write already queued landing on disk
+           first** (:meth:`_flush_history_durability`) — so nothing is
+           left to silently land in the fresh segment step 3 opens.
+           ``self._history_durability_worker`` is its OWN DEDICATED
+           ``DurabilityWorker`` instance (see that field's own ``__init__``
+           comment — mirrors ``MediaStore``'s rationale for a dedicated,
+           not session-shared, worker), so this flush waits ONLY for
+           history's own queued writes — it does NOT wait for the WAL's
+           or snapshot's own writes, which go through ``StateLog``'s own
+           SEPARATE (shared-with-``SnapshotJournal``) worker instead.
+           A one-time cost paid once per explicit user confirmation,
+           never per turn.
+           **This guarantee does NOT cross a ``DurabilityWorker`` queue
+           REBIND** (#6261: a second ``asyncio.run()`` against the same
+           worker rebinds its queue to the new loop, silently dropping
+           whatever was still queued on the old one) — a pre-existing,
+           shared defect this PR did not create and does not fix; when
+           #6261 lands this guarantee tightens for free.
+        1. **Close the handle.** ``run()``'s own teardown already
            establishes this shape (:meth:`_invalidate_history_append_
            handle`) — an open handle must never outlive the file it
            points at being removed out from under it (the #6247/#6251
@@ -4746,6 +4783,7 @@ class Session:
         The caller (``clear_history.py``'s slash handler) keeps only the
         confirm-flow UX: the two-step confirmation prompt, the
         ``Currently: N turns`` line, and the success/error reply text."""
+        await self._flush_history_durability()
         n_turns_before = len(self.history)
         self._invalidate_history_append_handle()
         self._active_segment_min_seq = None
