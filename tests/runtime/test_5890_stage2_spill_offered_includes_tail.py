@@ -83,16 +83,24 @@ def test_is_already_spilled_recognises_content_spilled_from_a_tail_turn(tmp_path
     future refill moving this exact content into ``raw_middle`` would
     still correctly skip it here, by value, never re-spilling it and
     never double-counting it as fresh progress."""
-    history_buffer, _history = _make_real_history_buffer(tmp_path)
+    history_buffer, history = _make_real_history_buffer(tmp_path)
 
     original_content = "TAIL_OVERSIZED_RESULT " * 2000
     assert history_buffer.is_already_spilled(original_content) is False
 
-    spilled_preview = history_buffer.spill_turn_content(
+    # #6240 ④: spill_turn_content returns its durable record now rather
+    # than appending it itself — this test plays the production
+    # loop-side appender role directly (same as `history_appender=
+    # history.append` above), so `is_already_spilled` (reading the
+    # durable supersede map back off `history_fn()`) sees it below.
+    outcome = history_buffer.spill_turn_content(
         original_content, chain_id="c1", tool="tail_turn", seq=1,
     )
+    spilled_preview = outcome.replacement
     assert spilled_preview is not None, "expected a real spill (media_store is configured)"
     assert spilled_preview != original_content
+    assert outcome.record is not None, "sanity: a durable record must be returned"
+    history.append(outcome.record)
 
     assert history_buffer.is_already_spilled(spilled_preview) is True
     # The ORIGINAL content (as opposed to the preview it turned into) is

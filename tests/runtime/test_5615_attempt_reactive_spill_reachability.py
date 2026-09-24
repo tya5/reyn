@@ -186,10 +186,18 @@ def test_deny_sibling_pre_spilled_candidate_never_re_offloaded(
     _push(session, "assistant", "ok", spillability=Spillability.NEVER)
 
     hb = session._loop_driver._history_buffer
-    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    # #6240 ④: spill_turn_content returns its durable record now rather
+    # than appending it itself — this test plays the production
+    # loop-side appender role directly, so `is_already_spilled` (which
+    # reads the durable supersede map back off `session.history`) sees
+    # it below, exactly as it would after a real reactive spill.
+    outcome = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    replacement = outcome.replacement
     assert replacement is not None and replacement != huge, (
         "sanity: the candidate must genuinely be spilled ahead of time"
     )
+    assert outcome.record is not None, "sanity: a durable record must be returned"
+    session._append_history(outcome.record)
 
     progressed = asyncio.run(
         session._loop_driver._attempt_reactive_spill(chain_id="c2"),

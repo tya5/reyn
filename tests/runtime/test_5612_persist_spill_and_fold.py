@@ -63,10 +63,18 @@ def test_persisted_spill_survives_wal_truncation_past_its_own_event(
     _push(session, "tool", huge, tool_call_id="tc1", name="tool")
 
     hb = session._loop_driver._history_buffer
-    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    # #6240 ④: spill_turn_content no longer appends its own durable
+    # record — it returns one (SpillTurnResult), and the production
+    # loop-side caller appends it once back on the loop. This test
+    # drives the same production write seam directly, so it plays that
+    # loop-side role itself, exactly as router_loop_driver.py does.
+    outcome = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    replacement = outcome.replacement
     assert replacement is not None and replacement != huge, (
         "sanity: the spill must have genuinely produced a preview"
     )
+    assert outcome.record is not None, "sanity: a durable record must be returned"
+    session._append_history(outcome.record)
     assert _spill_records(session), "sanity: a durable spill_record must exist"
 
     # A LATER turn, appended AFTER the persisted spill record — dropped by
@@ -162,10 +170,15 @@ def test_fold_persist_policy_never_still_persists_spill_but_not_fold(
     _push(session, "tool", huge, tool_call_id="tc1", name="tool")
 
     hb = session._loop_driver._history_buffer
-    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    # #6240 ④: see the previous test's own comment — this test plays the
+    # loop-side appender role itself, driving the same production seam.
+    outcome = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    replacement = outcome.replacement
     assert replacement is not None and replacement != huge, (
         "sanity: the in-memory substitution must still happen"
     )
+    assert outcome.record is not None, "sanity: a durable record must be returned"
+    session._append_history(outcome.record)
     assert len(_spill_records(session)) == 1, (
         "fold_persist_policy='never' must still durably append exactly ONE "
         "spill_record — architect's own final gate ruling: the knob "

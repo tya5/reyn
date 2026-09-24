@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from reyn.runtime.chat_message import (
     CONTENT_REF_META_KEY,
@@ -45,6 +45,8 @@ from reyn.runtime.chat_message import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from reyn.runtime.chat_message import ChatMessage
+
 # #5612: the reactive overflow-recovery spill's own durable supersede
 # record role — see chat_message.py's own role-vocabulary entry and
 # SPILL_TARGET_CONTENT_HASH_META_KEY's own comment for the full contract.
@@ -52,6 +54,35 @@ if TYPE_CHECKING:
 # that constructs/reads this role — mirrors SUMMARY_MESSAGE_ROLE's own
 # home in engine.py (the one place THAT role's own machinery lives).
 SPILL_RECORD_MESSAGE_ROLE = "spill_record"
+
+
+class SpillTurnResult(NamedTuple):
+    """#6240 ④ (architect ruling, issue #6240 comment 5807710323): the
+    EXTENDED return of :meth:`RouterHistoryBuffer.spill_turn_content` —
+    ``replacement`` is the SAME ``str | None`` that method always
+    returned (the offloaded preview text, or ``None`` for either no-op
+    degrade — see that method's own docstring); ``record`` is NEW: the
+    durable supersede-map ``ChatMessage`` the method used to append to
+    history ITSELF, via ``self._history_appender(record)``, from
+    whichever thread called this method.
+
+    #6240 ④'s whole point is that this method — reachable from a worker
+    thread via ``RouterLoopDriver._spill_batch_within_face`` /
+    ``_spill_batch_for_retry``, both run through ``asyncio.to_thread`` —
+    must never again write session state itself
+    (``Session._append_history`` bumps ``self._next_seq`` and mutates
+    ``self.history``/the active segment window, none of it synchronized
+    against a concurrent loop-side caller). So the record is now hand
+    back to whichever caller is ON THE LOOP once the ``to_thread`` call
+    that reached this method returns, and THAT caller appends it —
+    never this method, never the worker thread. ``record`` is ``None``
+    whenever there was nothing new to append (no media store, no-op
+    replacement, no history appender configured, or this exact content
+    was already durably recorded — see ``spill_turn_content``'s own
+    body for each case)."""
+
+    replacement: "str | None"
+    record: "ChatMessage | None"
 
 # #5973 裁定②: a bounded, cheap-to-show text for a content_ref row whose
 # real body a materialization budget refused to pull in this wire-build
@@ -1759,17 +1790,29 @@ class RouterHistoryBuffer:
 
     def spill_turn_content(
         self, content: str, *, chain_id: str = "", tool: str = "tool", seq: int = 1,
-    ) -> "str | None":
+    ) -> "SpillTurnResult":
         """#5296 PR-2: reactively spill one already-serialised turn's wire
         string — offload it via the SAME mechanism the existing
         write-time cap already uses (``tool_result_cap.cap_tool_result_
         content`` + ``MediaStore.save_tool_result``, architect ruling:
-        "既存機構を再利用"), record the resulting overlay entry so every
-        FUTURE ``_serialise_turn`` of a turn with this exact content
-        returns the offloaded preview instead, and return that preview
-        text (``None`` if no ``media_store`` is configured — the same
-        no-op degrade the write-time cap already has for that case; the
-        caller treats that as "no progress" and escalates).
+        "既存機構を再利用"), and return a :class:`SpillTurnResult` whose
+        ``.replacement`` is that preview text (``None`` if no
+        ``media_store`` is configured — the same no-op degrade the
+        write-time cap already has for that case; the caller treats
+        that as "no progress" and escalates).
+
+        #6240 ④ (architect ruling): this method used to ALSO append the
+        durable supersede-map record itself
+        (``self._history_appender(record)``), right here, from whatever
+        thread called it — including a worker thread, via
+        ``RouterLoopDriver._spill_batch_within_face`` under
+        ``asyncio.to_thread``. That made session-state mutation
+        (``Session._append_history``'s ``self._next_seq += 1`` etc.)
+        reachable from off the loop, unsynchronized against a
+        concurrent loop-side ``_append_history`` call. This method no
+        longer appends anything, ever — see ``SpillTurnResult``'s own
+        docstring for why the record now rides the return value
+        instead, back to a caller the loop owns.
 
         #5564: NOT tool-result-only despite the write seam's own name —
         #5514 §7-1 made the caller's own candidate selection origin-blind
@@ -1803,7 +1846,7 @@ class RouterHistoryBuffer:
         failed turn.
         """
         if self._media_store is None:
-            return None
+            return SpillTurnResult(None, None)
         import hashlib
 
         from reyn.runtime.services.tool_result_cap import (
@@ -1847,7 +1890,7 @@ class RouterHistoryBuffer:
             # cap_tool_result_content's own no-op paths (cap<=0, or the
             # store write itself somehow returned the input unchanged) —
             # nothing was actually offloaded, so no durable record to add.
-            return None
+            return SpillTurnResult(None, None)
         content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
         # #5612 (owner ruling — durability means an append to
         # history.jsonl): record this spill DURABLY, once, idempotently —
@@ -1869,6 +1912,7 @@ class RouterHistoryBuffer:
         # ``fold_persist_policy`` exists specifically to gate the
         # IRREVERSIBLE fold (summary) step; that rationale never reaches
         # spill. The knob gates fold ONLY.
+        record: "ChatMessage | None" = None
         if self._history_appender is not None and _offloaded_ref is not None:
             already = content_hash in self._spill_supersede_map()
             if not already:
@@ -1885,16 +1929,18 @@ class RouterHistoryBuffer:
                     },
                     spillability=Spillability.NEVER,
                 )
-                self._history_appender(record)
-                # #5628/PR-review: no direct cache write here — the ONE
-                # mechanism is _spill_supersede_map's own watermark scan
-                # (its own docstring), which picks up this new record on
-                # its own next call (the newly-appended entry becomes
-                # part of the NEXT history_fn() result). A second,
-                # separate update path here previously existed and was a
-                # genuine drift hazard (see that method's own docstring)
-                # — never reintroduced.
-        return replacement
+                # #6240 ④: NOT appended here any more — handed back to
+                # the caller via SpillTurnResult.record instead (see
+                # this method's and that type's own docstring for why).
+                # #5628/PR-review (still true): no direct cache write
+                # here either way — the ONE mechanism is
+                # _spill_supersede_map's own watermark scan (its own
+                # docstring), which picks up this record once ITS
+                # caller durably appends it (the newly-appended entry
+                # becomes part of the NEXT history_fn() result). A
+                # second, separate update path here previously existed
+                # and was a genuine drift hazard — never reintroduced.
+        return SpillTurnResult(replacement, record)
 
     def build_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.

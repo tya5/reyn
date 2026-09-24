@@ -3184,8 +3184,27 @@ async def retry_loop(
     spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]] | None" = None,
     on_summary_used: "Callable[[ChatSummary, list[dict]], Awaitable[None]] | None" = None,
     spill_reachability_fn: "Callable[[], tuple[int, str] | None] | None" = None,
+    spill_record_sink: "list[Any] | None" = None,
+    append_history_fn: "Callable[[Any], None] | None" = None,
 ) -> Any:
     """Bounded shrink loop for context overflow recovery (PR-N6).
+
+    #6240 ④: ``spill_record_sink``/``append_history_fn`` — both, or
+    neither (a caller with no durable store wires neither, matching
+    every other optional-collaborator degrade in this ladder). See
+    :meth:`RecoveryLadder._drain_spill_records` for why draining these
+    happens EVERY iteration of the ladder's own loop, not once at the
+    end: ``spill_fn`` (``RouterLoopDriver._spill_batch_for_retry``) can
+    run more than once per episode (each shrink attempt), and
+    ``is_already_spilled``/the durable supersede map it reads must see
+    an EARLIER attempt's own spill before a LATER attempt in the SAME
+    episode re-scans the same candidates — exactly the visibility a
+    single synchronous append used to give for free. Draining only
+    after the whole episode (measured during PR review — repeated
+    ``tool_result_offloaded`` events for the SAME candidate before
+    ``spill_candidate_population_exhausted``) reintroduces the
+    duplicate-offload hazard ``is_already_spilled``'s own docstring
+    already names.
 
     #5631 candidate 1 (Fowler, Replace Function with Command — architect
     ruling, issue #5631 §1): this is now a thin entry point. The ladder's
@@ -3219,6 +3238,8 @@ async def retry_loop(
         learner=learner, main_call=main_call, spill_fn=spill_fn,
         on_summary_used=on_summary_used,
         spill_reachability_fn=spill_reachability_fn,
+        spill_record_sink=spill_record_sink,
+        append_history_fn=append_history_fn,
     )
     return await ladder.run()
 
@@ -3461,6 +3482,8 @@ class RecoveryLadder:
         spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]] | None" = None,
         on_summary_used: "Callable[[ChatSummary, list[dict]], Awaitable[None]] | None" = None,
         spill_reachability_fn: "Callable[[], tuple[int, str] | None] | None" = None,
+        spill_record_sink: "list[Any] | None" = None,
+        append_history_fn: "Callable[[Any], None] | None" = None,
     ) -> None:
         self._SP = SP
         self.head = payload.head
@@ -3480,6 +3503,13 @@ class RecoveryLadder:
         # None (the default) preserves this class's pre-#5720 shape byte-
         # for-byte for any caller that doesn't wire one.
         self._spill_reachability_fn = spill_reachability_fn
+        # #6240 ④: see retry_loop's own docstring for why these are
+        # drained after EVERY shrink attempt (:meth:`_drain_spill_
+        # records`, called right after this ladder's own
+        # ``asyncio.to_thread(shrink_pool_after_overflow, ...)``), not
+        # once at the end.
+        self._spill_record_sink = spill_record_sink
+        self._append_history_fn = append_history_fn
 
         from reyn.llm.llm import note_upstream_recovery_call_attempt
         from reyn.llm.model_budget import get_max_input_tokens
@@ -4387,6 +4417,36 @@ class RecoveryLadder:
             if outcome is not _LADDER_CONTINUE:
                 return outcome
 
+    def _drain_spill_records(self) -> None:
+        """#6240 ④ (architect ruling, issue #6240 comment 5807710323):
+        append every durable record ``self._spill_fn`` collected into
+        ``self._spill_record_sink`` since the last drain, via
+        ``self._append_history_fn`` — called ONLY from a frame that is
+        genuinely on the loop (immediately after
+        ``await asyncio.to_thread(shrink_pool_after_overflow, ...)``
+        returns in :meth:`_run_one_iteration`, never from inside that
+        ``to_thread`` call itself). A no-op when either collaborator is
+        ``None`` (no durable store wired — matches every other optional-
+        collaborator degrade this ladder already has for ``spill_fn``
+        itself, ``spill_reachability_fn``, etc.).
+
+        Drained here — after EVERY shrink attempt, not once at the very
+        end of the whole episode — because a SINGLE episode's own
+        ``while True:`` (:meth:`run`) can dispatch this ``to_thread``
+        call more than once (each halving/mid-floor attempt is its own
+        dispatch): a LATER attempt's ``is_already_spilled`` check (the
+        durable supersede map, read back off history) must see an
+        EARLIER attempt's own spill from the SAME episode, or it
+        re-offers the identical candidate as if it were still fresh —
+        measured during PR review as repeated ``tool_result_offloaded``
+        audit-events for the SAME candidate, all landing BEFORE
+        ``spill_candidate_population_exhausted``, when this was instead
+        drained once at the episode's end."""
+        if self._spill_record_sink is None or self._append_history_fn is None:
+            return
+        while self._spill_record_sink:
+            self._append_history_fn(self._spill_record_sink.pop(0))
+
     async def _run_one_iteration(self) -> Any:
         """One pass of the ladder's own former ``while True:`` body
         (#5631 candidate 1) — returns the recovered response on success,
@@ -4471,6 +4531,13 @@ class RecoveryLadder:
                     spill_fn=self._spill_fn or (lambda _offered: []),
                     saw_byte_limit=self._last_recover_is_byte_limit,
                 )
+                # #6240 ④: back on the loop (past the ``await`` above) —
+                # append whatever ``self._spill_fn`` collected THIS
+                # attempt before the ladder's own ``while True:`` (in
+                # ``run()``) dispatches the NEXT one, so
+                # ``is_already_spilled`` sees it on a later attempt
+                # within this SAME episode.
+                self._drain_spill_records()
                 if len(_offered_for_shrink) != _expected_len_after_spill:
                     # `raise`, never `assert` (asserts vanish under
                     # `-O`) -- this invariant is load-bearing for
