@@ -4600,7 +4600,32 @@ class Session:
         finding itself. Every one of those call sites, and every
         production caller (``clear_history``, the ``history_durability_
         flush=`` wiring into ``CompactionController``), now calls this
-        SAME public name — there is no private twin left anywhere."""
+        SAME public name — there is no private twin left anywhere.
+
+        ⚠️ **Do not call this from a slash handler.** The ordering
+        invariant this barrier depends on lives inside :meth:`clear_
+        history`, not here (#6257 ruling): that method flushes THEN
+        closes the append handle THEN deletes the active segment THEN
+        reopens a fresh one, in that order, because only the handle's
+        owner may safely delete the segment a live appender still has
+        open. Calling this barrier alone from outside gets you the
+        drain with none of that ordering — a caller without the handle
+        racing to delete/reopen the active segment out from under a
+        live appender, the exact failure class #6247/#6251 each closed
+        once already. If a handler needs to observe durable history,
+        design the operation through ``clear_history`` or a new
+        purpose-built seam, never a bare call to this method.
+
+        #6260 (architect): **no gate enforces the line above.** Going
+        public (this docstring's own #6260 paragraph) took this method
+        out of BOTH guards that would otherwise have caught a slash
+        handler reaching for it: the residue gate
+        (``test_3595_s4_slash_handler_seam.py``) only walks PRIVATE
+        (``_``-prefixed) attribute access, so a public method is
+        invisible to it by construction; the public-member ceiling in
+        that same file only counts the surface's SIZE, never which
+        caller reaches which member. This paragraph — read by whoever
+        next opens this method — is the only thing standing guard."""
         await self._history_durability_worker.flush()
 
     def _maybe_seal_active_history_segment(self) -> None:
