@@ -41,21 +41,26 @@ mattered), one check per write only when idle (where the cost never mattered). T
 carries no opinion about WHAT the hook checks — same substrate-agnostic discipline as the
 ``DurableWrite`` callable itself.
 
-#6240 ⑵ (architect ruling, issue #6240 comments 5807595460 + 5808598931): the SAME per-burst
-boundary, mirrored at the OTHER end of ``_drain()``. ``Session`` holds a DEDICATED worker for
-``history.jsonl`` (constructed separately from the WAL/snapshot/audit/media workers — same
+#6240 ⑵ (architect ruling, issue #6240 comments 5807595460 + 5808598931; PR #6262 review found a
+hole in the FIRST cut of this ruling — see below): the SAME per-burst boundary as
+``on_drain_start`` above, at the OTHER end of ``_drain()``. ``Session`` holds a DEDICATED worker
+for ``history.jsonl`` (constructed separately from the WAL/snapshot/audit/media workers — same
 class, four separate instances, ``git grep 'DurabilityWorker(' -- src/`` shows the four call
 sites), so this hook costs the OTHER three substrates nothing: ``on_drain_end`` (below) is
-OPTIONAL, defaulted to ``None``, same discipline as ``on_drain_start``. Invoked once, right
-before ``_drain()`` self-terminates on an EMPTY queue (never on the ``CancelledError`` exit —
-a cancel mid-write is a #6261-owned hole, not this hook's concern; fsync-ing during teardown
-would race it). Because BOTH of ``_drain``'s callers — the self-terminating background task
-AND :meth:`_drain_to_empty`'s own inline-drain branch (``flush``/``aclose`` when no live
-drainer is left to hand the queue to) — bottom out in this SAME ``_drain()`` body, wiring the
-hook here (never on a background ``Task``'s ``add_done_callback``, which the inline branch
-never creates) is the ONE place that covers both. History's own use: fsync the durable append
-handle once per burst, not once per line — the fsync count is bounded by drain bursts, not by
-append count.
+OPTIONAL, defaulted to ``None``, same discipline as ``on_drain_start``.
+
+**Not** a post-loop callback invoked directly from the ``QueueEmpty`` branch (the ORIGINAL
+shape this ruling shipped with) — PR review found that shape unobservable by ``flush``/
+``aclose``, both of which wait on ``queue.join()``: every REAL item's ``task_done()`` already
+ran by the time the ``QueueEmpty`` branch is reached, so ``join()`` can (and did) release before
+a post-loop hook's own ``await`` even started. The fix (see :meth:`_drain`'s own docstring for
+the mechanism): ``on_drain_end`` is ENQUEUED as an ordinary queue item on the first empty check
+of a burst, and the loop only actually returns on the burst's SECOND empty check — so the hook
+runs through :meth:`_run_with_retry` like any other write (a persistent failure gets the same
+retry/escalation, not a bare unhandled exception) and its own ``task_done()`` is one ``join()``
+WILL wait on — closing the gap by construction rather than by touching the barrier itself.
+History's own use: fsync the durable append handle once per burst, not once per line — the
+fsync count is bounded by drain bursts, not by append count.
 """
 from __future__ import annotations
 
@@ -214,16 +219,11 @@ class DurabilityWorker:
         internal getter ``call_soon`` raises "Event loop is closed". Draining via ``get_nowait``
         and exiting on empty avoids the leak entirely.
 
-        No-stranding: with ``on_drain_end`` unset, the ``QueueEmpty`` check + ``return`` are atomic
-        (no ``await`` between), so a concurrent ``submit`` cannot interleave there — an item
-        enqueued while a prior one is processing is seen on the next iteration; an item enqueued
-        after the drainer exits is picked up when the next submit re-kicks it (``_ensure_runtime``
-        restarts a ``done()`` drainer). With ``on_drain_end`` SET, its ``await`` DOES sit between
-        the check and the return — so a ``submit`` landing during that ``await`` would otherwise be
-        stranded (``_kick`` sees this drainer as not-``done()`` yet and declines to spawn a second
-        one, trusting THIS loop to pick the item up — a trust this exit was about to betray). The
-        re-check below (``if not self._queue.empty(): continue``) closes that window: the loop
-        re-enters instead of returning whenever the hook's own ``await`` let something else land.
+        No-stranding: the ``QueueEmpty`` check + ``return`` are atomic (no ``await`` between), so a
+        concurrent ``submit`` cannot interleave there — an item enqueued while a prior one is
+        processing is seen on the next iteration; an item enqueued after the drainer exits is
+        picked up when the next submit re-kicks it (``_ensure_runtime`` restarts a ``done()``
+        drainer).
 
         ``CancelledError`` MUST propagate (terminate the drainer): it is NOT a write failure.
         Swallowing it (catching ``BaseException``) made an earlier drainer immortal — a cancel
@@ -235,28 +235,93 @@ class DurabilityWorker:
         processes any queued item — this IS the "once per burst" checkpoint (see module
         docstring): every ``_drain()`` call is exactly one such burst, since the drainer is
         self-terminating and only re-``_kick``ed when a NEW item lands after it already exited.
+        Left untouched by #6240 ⑵ below (architect ruling): a START hook runs BEFORE any item is
+        processed, so it never needs ``queue.join()``'s own accounting to be correct — moving it
+        would touch a boundary that has no defect.
 
-        #6240 ⑵: ``on_drain_end`` (if set) runs ONCE here too, right before the self-terminating
-        ``return`` on an EMPTY queue — the OTHER end of the same burst boundary. Both of this
-        method's callers (the background self-terminating drainer task, AND
-        :meth:`_drain_to_empty`'s own inline-drain branch, which calls ``await self._drain()``
-        directly with no intervening ``Task``) bottom out in THIS body, so wiring the hook here
-        — never externally, e.g. via a ``Task.add_done_callback`` the inline branch would never
-        create — is the one place that reaches both. Never runs on the ``CancelledError`` exit
-        below (a cancel is not "drained"; fsync-ing mid-teardown is #6261's own territory, not
-        this hook's — see :class:`DurabilityWorker`'s own module docstring)."""
+        #6240 ⑵ (architect ruling, PR #6262 review — the FIRST cut of this ruling put
+        ``on_drain_end`` in a post-loop hook here, called directly from the ``QueueEmpty`` branch;
+        review found that placement unobservable by :meth:`flush`/:meth:`aclose`, both of which
+        wait on ``queue.join()`` — ``task_done()`` is called for every REAL item before this
+        branch is ever reached, so ``join()`` could release BEFORE a post-loop hook's own ``await``
+        even started, let alone finished): ``on_drain_end`` (if set) is never called directly here
+        at all. Instead it is ENQUEUED as an ordinary ``(task, None)`` item, so it runs through
+        :meth:`_run_with_retry` like any other queued write (a persistent failure — e.g. ``fsync``
+        racing a closed handle — gets the SAME retry/escalation treatment a real write gets, not a
+        bare unhandled exception with nowhere to go) and gets its OWN ``task_done()`` call exactly
+        like any other item — which is what makes ``queue.join()`` (the barrier ``flush()``/
+        ``aclose()`` already rely on, #6260's own cancel-race argument at :meth:`_drain_to_empty`,
+        20 lines this ruling does not re-open) account for it, with no change to the barrier
+        itself. ``drain_end_enqueued`` below is a LOCAL — scoped to THIS ``_drain()`` call, i.e. to
+        one burst, never a ``self.`` attribute — guarding against enqueuing it twice (the job's own
+        completion would otherwise see ANOTHER empty queue and enqueue itself again, forever); a
+        fresh ``_drain()`` call gets a fresh (``False``) guard, so the NEXT burst still gets its own
+        end-of-burst job.
+
+        WHERE the enqueue happens is load-bearing, not a style choice — a SECOND race, caught only
+        by actually running the mechanism-level witness (``tests/runtime/
+        test_6240_2_history_fsync_on_drain_end.py``'s witness ⑤), not by reasoning about it: a
+        first attempt enqueued the job ONLY from the ``QueueEmpty`` branch below (i.e. AFTER
+        dropping through with nothing left) — but ``asyncio.Queue.join()`` releases its waiters the
+        INSTANT ``unfinished_tasks`` (put count minus ``task_done()`` count) touches zero, even
+        momentarily, and a LATER ``put_nowait`` (which internally re-``clear()``s the queue's
+        "finished" event) cannot un-release a waiter whose future was already resolved by that
+        earlier zero-crossing — ``Event.set()`` is a one-way edge per waiter. Calling ``task_done()``
+        for the LAST real item (whatever item's own dequeue leaves the queue empty) drops the count
+        to zero BEFORE the end-of-burst job is enqueued on the NEXT iteration, so any ``flush()``/
+        ``aclose()`` already waiting got released one iteration early — exactly the same class of
+        gap this whole ruling exists to close, re-derived one layer down. The fix: the check for
+        "does this burst still owe an end-of-burst job" happens right after ``get_nowait()``
+        succeeds (there is no ``await`` between them, so nothing else can run in between) — if the
+        queue is ALREADY empty at that point (this dequeue just emptied it) and the job has not been
+        enqueued yet, it is put now, BEFORE this item's own processing/``task_done()`` below, so
+        ``unfinished_tasks`` never has a chance to touch zero without the job already counted. The
+        ``QueueEmpty`` branch's own enqueue is the fallback for the (degenerate, but real —
+        :meth:`_drain_to_empty`'s inline branch can call this directly) case of a burst with ZERO
+        real items ever dequeued.
+
+        A residual, accepted gap: an item enqueued strictly DURING the end-of-burst job's own
+        ``await`` (e.g. a real write's ``asyncio.to_thread`` dispatch yielding the loop) is still
+        processed this same call (FIFO, same as any concurrent-append case the no-stranding
+        paragraph above already covers) but will not get a SECOND end-of-burst job this call (the
+        guard is already ``True``) — it is left for whatever NEXT burst a future ``submit``
+        re-kicks. If none ever comes, that write's OWN durability is unaffected (it still landed
+        on disk via ``f.flush()``) but this hook's OWN promise for it is deferred, not lost: an
+        ``os.fsync`` on the same fd/file syncs every prior unsynced write too, so any later burst's
+        end-of-burst job still covers it retroactively."""
         assert self._queue is not None
         if self._on_drain_start is not None:
             await self._on_drain_start()
+        drain_end_enqueued = False
         while True:
             try:
                 do_durable_write, fut = self._queue.get_nowait()
             except asyncio.QueueEmpty:
-                if self._on_drain_end is not None:
-                    await self._on_drain_end()
-                    if not self._queue.empty():
-                        continue  # something landed during the hook's own await -- re-drain it
-                return  # drained → self-terminate
+                if self._on_drain_end is not None and not drain_end_enqueued:
+                    drain_end_enqueued = True
+                    self._queue.put_nowait((self._on_drain_end, None))
+                    continue  # the job just enqueued is picked up on the NEXT iteration
+                return  # drained -- self-terminate
+            if (
+                self._on_drain_end is not None
+                and not drain_end_enqueued
+                and self._queue.empty()
+            ):
+                # This dequeue just emptied the queue -- the item now in hand may be the
+                # LAST real item of the burst. Enqueue the end-of-burst job HERE, before
+                # this item's own task_done() below, never after: asyncio.Queue.join()
+                # releases its waiters the INSTANT unfinished_tasks (put count - task_done
+                # count) touches zero, and a later put_nowait's queue.clear() cannot
+                # un-release a waiter already woken (Event.set() is a one-way edge; a
+                # waiter's future is already resolved by the time clear() runs) -- #6262
+                # review caught this exact transient-zero race in an earlier cut that
+                # enqueued the job only from the QueueEmpty branch itself, one iteration
+                # AFTER this item's task_done() had already dropped the count to zero and
+                # released `flush()`/`aclose()` early. Keeping the count >= 1 continuously
+                # (this item + the job now both counted) from the LAST real item through
+                # to the end-of-burst job's own task_done() closes that window.
+                drain_end_enqueued = True
+                self._queue.put_nowait((self._on_drain_end, None))
             try:
                 await self._run_with_retry(do_durable_write)
             except asyncio.CancelledError:

@@ -4599,17 +4599,55 @@ class Session:
     async def _fsync_history_append_handle_on_drain_end(self) -> None:
         """The history :class:`~reyn.core.events.durability_worker.
         DurabilityWorker`'s ``on_drain_end`` hook (#6240 ⑵, architect
-        ruling, issue #6240 comments 5807595460 + 5808598931) — fsyncs
-        this session's OWN currently-open append handle
-        (:meth:`_history_append_handle`'s cache, :attr:`_history_append_
-        fh`) once every time the worker's queue drains to empty, off the
-        loop (``asyncio.to_thread``, same discipline as the write itself).
+        ruling, issue #6240 comments 5807595460 + 5808598931; PR #6262
+        review corrected the ORIGINAL ruling's own boundary placement —
+        see :meth:`~reyn.core.events.durability_worker.DurabilityWorker.
+        _drain`'s docstring for the mechanism) — fsyncs this session's OWN
+        currently-open append handle (:meth:`_history_append_handle`'s
+        cache, :attr:`_history_append_fh`) once every time the worker's
+        queue drains to empty, off the loop (``asyncio.to_thread``, same
+        discipline as the write itself).
+
+        Because this is now ENQUEUED as an ordinary queue item (not
+        called directly from a post-loop branch — the #6262 review fix),
+        ``DurabilityWorker.flush()``/``aclose()`` (both ``await queue.
+        join()``) do not return until THIS coroutine has itself
+        completed — the property the ORIGINAL placement lacked (a
+        ``flush()`` that returned before this ever ran). ``run()``'s
+        teardown (``await flush_history()`` before
+        :meth:`_invalidate_history_append_handle` closes the handle) and
+        :meth:`clear_history`'s own flush-before-delete step (#6257) both
+        depend on exactly this — closing #6240 ⑴/⑵'s two faces of the
+        SAME gap (architect ruling: fix once, here, never separately).
 
         A no-op when nothing is open (``_history_append_fh is None`` —
         no append has ever landed against this handle, or it was just
         closed by a mid-session seal/teardown): there is nothing to
         fsync, and opening one here just to fsync it would be a write
         this hook never made.
+
+        ``fh.fileno()`` is called INSIDE the thread body (``_fsync_fh``
+        below), never eagerly on the calling coroutine before ``await
+        asyncio.to_thread(...)`` starts (the PR's own first cut did this,
+        and review caught it): the ORIGINAL shape evaluated ``fh.
+        fileno()`` before dispatch, so if the handle was closed WHILE the
+        fsync ran off-loop (a #6248 seal, or ``clear_history``'s own
+        close), the captured fd NUMBER could already have been reused by
+        a freshly-opened file (the NEXT active segment) by the time the
+        thread's ``os.fsync`` call actually ran — silently syncing the
+        WRONG file while returning success. Calling ``fh.fileno()`` from
+        inside the thread instead makes a closed handle raise
+        ``ValueError`` there (Python's own file objects raise on
+        ``fileno()`` once closed) — turning "silently syncs a different
+        file" into "fails loudly", which (since this job runs through
+        ``DurabilityWorker._run_with_retry`` like any other queued write,
+        #6262 review) reaches the SAME retry/escalation path a real
+        write's ``OSError`` would. ⚠️ The race window itself (between
+        this thread's own ``fh.fileno()`` call and its ``os.fsync`` call)
+        is NOT eliminated — it is only made loud instead of silent; a
+        handle closed in that exact sub-window would still, in principle,
+        fsync a reused fd. Closing the window itself is out of this
+        method's scope.
 
         Why THIS boundary (never per-line, never ``turn_settled``): the
         13 WAL-event kinds carry no chat-turn payload at all — a crash
@@ -4650,7 +4688,11 @@ class Session:
         fh = self._history_append_fh
         if fh is None:
             return
-        await asyncio.to_thread(os.fsync, fh.fileno())
+
+        def _fsync_fh() -> None:
+            os.fsync(fh.fileno())
+
+        await asyncio.to_thread(_fsync_fh)
 
     async def flush_history(self) -> None:
         """Wait until every :meth:`_append_history` write enqueued so far

@@ -63,6 +63,35 @@ worker's own ``flush()``; witness ② cancels the drainer task with no
 ``await`` between its creation and the cancel (same determinism
 ``test_1765_durability_worker.py`` already relies on) then awaits ``flush()``.
 
+PR #6262 review (BLOCKING) caught a hole in the FIRST cut of this design:
+``on_drain_end`` was called directly from the ``QueueEmpty`` branch, AFTER
+every real item's own ``task_done()`` -- so ``DurabilityWorker.flush()``/
+``aclose()`` (both ``await queue.join()``) could return BEFORE the hook's
+own ``await`` even started, let alone finished. CI caught this exact gap:
+witness ① (this file, head ``8d74b7522``) failed non-deterministically
+("got none") on the SAME leg the reviewer's structural argument predicted.
+The fix (architect ruling, same PR): ``on_drain_end`` is no longer called
+from a post-loop branch at all -- it is ENQUEUED as an ordinary queue item
+on the burst's first empty check, so ``join()`` naturally waits for it
+(see ``DurabilityWorker._drain``'s own docstring for the full mechanism,
+and its module docstring for why ``on_drain_start`` was deliberately left
+untouched). Witnesses ⑤/⑥ below are the deny/present pair architect asked
+for at the MECHANISM level (queue accounting, not ``os.fsync`` itself) --
+distinct from witnesses ①/② above, which exercise the same property one
+layer up, through the real fsync syscall.
+
+A SEPARATE hole in the same first cut, also fixed in this PR: ``fh.
+fileno()`` used to be read on the calling coroutine BEFORE ``asyncio.
+to_thread`` dispatched -- so a handle closed WHILE the fsync ran off-loop
+(a #6248 seal, or ``clear_history``) could have its fd number reused by a
+freshly-opened file before the thread's own ``os.fsync`` call actually
+ran, silently syncing the WRONG file. Moving the ``fileno()`` call INSIDE
+the thread body (session.py) does not close that race window -- it turns
+a closed handle into a loud ``ValueError`` instead of a silent wrong-file
+sync. Not independently witnessed here (no test forces that exact
+sub-window); recorded as a structural fix per architect's own "the window
+does not disappear, only the silence does" instruction.
+
 Strip-falsify performed in-file via Edit -> observe RED -> Edit back
 (``git checkout``/``stash``/``restore`` never used, CLAUDE.md) for every
 witness; RED text recorded verbatim in each test's own docstring."""
@@ -76,6 +105,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.durability_worker import DurabilityWorker
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
@@ -295,3 +325,86 @@ def test_the_drain_end_hook_itself_calls_fsync() -> None:
         "Session._fsync_history_append_handle_on_drain_end must itself "
         f"call os.fsync -- source:\n{source}"
     )
+
+
+@pytest.mark.asyncio
+async def test_flush_waits_for_the_enqueued_end_of_burst_job_before_returning() -> None:
+    """Tier 2: witness ⑤ (deny, PR #6262 review's mechanism-level pair) --
+    ``DurabilityWorker.flush()`` (``await queue.join()``) does not return
+    until an ``on_drain_end`` job it enqueued has ITSELF completed. This
+    is the property the FIRST cut of #6240 ⑵ lacked (``on_drain_end`` was
+    called from a post-loop branch OUTSIDE ``join()``'s own accounting) --
+    CI caught the resulting non-determinism directly (witness ① above,
+    head ``8d74b7522``, "got none").
+
+    ``on_drain_end`` here awaits a real scheduling point (``asyncio.
+    sleep(0)`` -- the documented, deterministic single-iteration yield
+    several other tests in this repo already rely on, e.g. ``tests/core/
+    test_await_quiescent.py``; NOT a duration -- no elapsed time is
+    asserted on) before flipping a flag, so "the flag is set" can only be
+    true if the drainer's own event loop actually let that coroutine run
+    to COMPLETION -- not merely that it was scheduled.
+
+    Strip-falsify: this test ALSO catches a SECOND, more subtle race the
+    module's own docstring records -- temporarily removed the pre-emptive
+    "enqueue the end-of-burst job before THIS item's own task_done()"
+    check in ``DurabilityWorker._drain`` (durability_worker.py), leaving
+    only the ``QueueEmpty``-branch enqueue. That shape still enqueues the
+    job eventually, but ONE iteration too late: the LAST real item's own
+    ``task_done()`` already drops ``unfinished_tasks`` to zero (releasing
+    any waiting ``flush()``) BEFORE the end-of-burst job is put back on
+    the queue. Observed RED (this test caught it locally BEFORE it could
+    reach CI -- unlike the FIRST-cut gap, which CI caught directly)::
+
+        AssertionError: on_drain_end must have COMPLETED by the time
+        flush() returns -- got False.
+        assert False
+
+    Reverted immediately after observing (restored the pre-emptive
+    enqueue check); confirmed GREEN again -- repeatedly (stress-run 25x
+    locally with no failure, since the property is now structural, not
+    timing-dependent, unlike either broken shape)."""
+    done = False
+
+    async def _on_drain_end() -> None:
+        nonlocal done
+        await asyncio.sleep(0)
+        done = True
+
+    async def _noop() -> None:
+        return None
+
+    w = DurabilityWorker(on_drain_end=_on_drain_end)
+    w.submit_nowait(_noop)
+    await w.flush()
+
+    assert done, (
+        f"on_drain_end must have COMPLETED by the time flush() returns -- got {done}"
+    )
+    await w.aclose()
+
+
+@pytest.mark.asyncio
+async def test_flush_returns_normally_with_no_on_drain_end_configured() -> None:
+    """Tier 2: witness ⑥ (present, the sibling architect asked for) --
+    the SAME shape (submit, then flush()) on a worker with NO
+    ``on_drain_end`` at all (WAL/snapshot/audit/media's own shape -- the
+    default) returns normally, with the submitted write's own effect
+    visible. Without this sibling, witness ⑤'s deny could pass vacuously
+    in a world where ``flush()`` was changed to unconditionally wait on
+    SOMETHING regardless of whether ``on_drain_end`` is even configured --
+    this rules that out."""
+    written: "list[str]" = []
+
+    async def _write() -> None:
+        written.append("done")
+
+    w = DurabilityWorker()  # no on_drain_end -- the other 3 substrates' own shape
+    w.submit_nowait(_write)
+    await w.flush()
+
+    assert written == ["done"], (
+        "flush() must still return normally and drain the write with no "
+        f"on_drain_end configured at all -- got {written!r}"
+    )
+    await w.aclose()
