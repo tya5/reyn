@@ -61,6 +61,21 @@ retry/escalation, not a bare unhandled exception) and its own ``task_done()`` is
 WILL wait on — closing the gap by construction rather than by touching the barrier itself.
 History's own use: fsync the durable append handle once per burst, not once per line — the
 fsync count is bounded by drain bursts, not by append count.
+
+#6261 (architect ruling, issue #6261): ``_ensure_queue`` rebinding to a new loop (a SECOND,
+separate ``asyncio.run()`` call against the same worker — a test-reachable shape; production
+runs one loop per process) used to just replace ``self._queue``, silently discarding whatever
+the OLD loop's queue still held. Ruling: log-and-drop leaves the loss standing (an announced
+loss is a record of loss, not a fix for it) and rejecting the rebind breaks legitimate reuse
+while moving the failure OUTSIDE durability's own code, where nobody fixing it would think to
+look. Instead the stale queue's contents are CARRIED FORWARD onto the fresh queue — see
+:meth:`_ensure_queue`/:meth:`_carry_over_stale_queue` for the mechanics and the one case
+(a BLOCKING ``submit`` awaiting a future the old, dead loop can never resolve) that is still
+dropped, deliberately, because nobody is left to observe it. This is the SAME class of defect
+``events.py``'s #4966 already closed for ``EventLog._ensure_consumer_started`` (a stale
+reference to a dead loop's task, detected via ``task.done()`` and re-bound rather than
+discarded) — #6261 answers it the same direction, one class over, so the repo does not hold
+two opposite answers to the same shape of bug.
 """
 from __future__ import annotations
 
@@ -126,17 +141,111 @@ class DurabilityWorker:
 
     def _ensure_queue(self) -> "asyncio.Queue":
         """Bind (or rebind) the queue to the RUNNING loop and return it. A new loop (a fresh test,
-        a re-init) gets a fresh queue + resets the drainer to None (the old loop's task is
-        abandoned — inert; in production there is one loop). Does NOT start the drainer — callers
-        enqueue FIRST, then ``_kick``, so the (self-terminating) drainer never sees an empty queue
-        before the item lands."""
+        a re-init, or this SAME worker driven through a SECOND, separate ``asyncio.run()`` call)
+        gets a fresh queue + resets the drainer to None (the old loop's task is abandoned — inert;
+        in production there is one loop). Does NOT start the drainer — callers enqueue FIRST, then
+        ``_kick``, so the (self-terminating) drainer never sees an empty queue before the item
+        lands.
+
+        #6261 (architect ruling): a rebind used to just replace ``self._queue`` outright —
+        whatever the OLD loop's queue still held was silently garbage-collected with it. Now
+        the stale queue's own contents are carried forward onto the fresh queue FIRST (see
+        :meth:`_carry_over_stale_queue`), before this call returns — so a caller enqueuing right
+        after a rebind lands its own item AFTER whatever was carried over, preserving FIFO."""
         loop = asyncio.get_running_loop()
         if self._loop is not loop:
+            stale_queue = self._queue
             self._queue = asyncio.Queue()
             self._loop = loop
             self._drainer = None  # old drainer (old loop) abandoned; _kick starts a fresh one
+            if stale_queue is not None:
+                self._carry_over_stale_queue(stale_queue)
         assert self._queue is not None
         return self._queue
+
+    def _carry_over_stale_queue(self, stale_queue: "asyncio.Queue") -> None:
+        """#6261 (architect ruling, issue #6261 — "移す, not log-and-drop, not raise"): called
+        ONLY from :meth:`_ensure_queue`, exactly once per rebind, with the queue that USED to be
+        bound to the loop that just stopped being the running one. This is the SAME class of
+        defect ``events.py``'s #4966 already answered for ``EventLog._ensure_consumer_started``
+        — a stale reference surviving a dead loop (there: a consumer ``Task``; here: a queue) —
+        and #4966 chose "detect the staleness, carry the mechanism forward", never "discard
+        silently". Answering #6261 with a plain drop would contradict that precedent one class
+        over, in the SAME file family.
+
+        Each queued item is ``(callable, future | None)`` (see :meth:`submit`/:meth:`submit_nowait`).
+        Three shapes, three outcomes:
+
+        * ``(callable, None)`` — a fire-and-forget write (``submit_nowait``/``submit_threadsafe``).
+          Its callable touches no loop object itself (it only runs ``await
+          asyncio.to_thread(...)`` internally), so it runs identically on ANY loop — MOVED onto
+          the new queue via ``put_nowait`` (that queue's own accounting, never the stale one's).
+          Moved in original (FIFO) order, and moved before ``_ensure_queue`` returns the new
+          queue to its caller, so these items are always ahead of whatever the caller that
+          triggered THIS rebind is about to enqueue.
+
+        * ``(callable, future)`` — a BLOCKING ``submit`` still awaiting that exact future. The
+          future was created on the OLD loop (``self._loop.create_future()`` at submit time);
+          its only awaiter is a coroutine running ON that old loop. By construction, a rebind
+          only happens when ``asyncio.get_running_loop()`` returns something else than
+          ``self._loop`` — one process has one loop in production, so this is reachable only via
+          a SECOND, separate ``asyncio.run()`` call (or an explicit second loop in a test) — and
+          either way, that old loop is no longer running by the time this executes, so its
+          awaiting coroutine can never be scheduled again. There is nobody left to hand this
+          future to, so it is DROPPED — never silently: the count is logged below.
+
+        * ``self._on_drain_end`` itself, enqueued with ``fut is None`` (see :meth:`_drain`'s own
+          docstring, #6240 ⑵) — DROPPED, and counted separately from an ordinary fire-and-forget
+          drop: it is a burst-boundary SIGNAL for the OLD (now-abandoned) burst, not durable
+          data, so dropping it loses nothing a caller could observe. The NEW loop gets its OWN
+          end-of-burst job at the true end of its OWN next ``_drain()`` call (:meth:`_drain`'s
+          normal path), and that job's fsync already covers every write carried over here,
+          PROVIDED they land on the same file — the module docstring's own "SAME FILE ONLY"
+          retroactive-coverage limit applies unchanged. Carrying the stale job forward instead
+          would only fsync twice, never add safety, and would need ``_drain``'s per-call
+          ``drain_end_enqueued`` guard to recognise it as already-answered, which a plain queued
+          item cannot signal.
+
+        ``stale_queue``'s own ``_unfinished_tasks``/``join()`` bookkeeping is left untouched (no
+        ``task_done()`` calls made against it): the only way to be blocked on
+        ``stale_queue.join()`` is a coroutine running on the OLD loop (:meth:`flush`/
+        :meth:`aclose` both bail out before ever reaching ``_drain_to_empty`` when the running
+        loop is not the bound one — see their own docstrings), and that loop is the one that
+        just stopped being the running loop — so no such waiter can exist by the time this
+        runs. The stale queue object is simply left to be garbage-collected whole."""
+        moved = 0
+        dropped_awaited = 0
+        dropped_stale_terminal_job = False
+        while True:
+            try:
+                do_durable_write, fut = stale_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if self._on_drain_end is not None and do_durable_write is self._on_drain_end:
+                dropped_stale_terminal_job = True
+                continue
+            if fut is None:
+                assert self._queue is not None
+                self._queue.put_nowait((do_durable_write, None))
+                moved += 1
+            else:
+                dropped_awaited += 1
+        if moved or dropped_awaited or dropped_stale_terminal_job:
+            detail = [f"carried over {moved} fire-and-forget write(s)"]
+            if dropped_awaited:
+                detail.append(
+                    f"dropped {dropped_awaited} awaited write(s) whose loop is gone "
+                    "(nobody is left waiting)"
+                )
+            if dropped_stale_terminal_job:
+                detail.append(
+                    "dropped the stale end-of-burst job (superseded by the new loop's own)"
+                )
+            import logging  # noqa: PLC0415
+            logging.getLogger(__name__).warning(
+                "DurabilityWorker rebind (queue moved to a new event loop): %s.",
+                "; ".join(detail),
+            )
 
     def _kick(self) -> None:
         """Start the self-terminating drainer if it is not currently running. Called AFTER the
@@ -443,6 +552,27 @@ class DurabilityWorker:
         write's effect (e.g. a test asserting a truncate's result, or a deliberate barrier).
         Same loop-guard as ``aclose``; a no-op if never used or called on a different loop.
 
+        #6261 (architect ruling, PR review): the two branches below both return SILENTLY —
+        never raising, never letting the caller tell "drained everything" apart from "did
+        nothing" — but they are not the same shape:
+
+        1. ``self._queue is None`` (or ``self._loop is None``) — truly unused; there is nothing
+           anywhere to lose.
+        2. ``running is not self._loop`` — this worker's queue is bound to a DIFFERENT loop than
+           the one calling ``flush()`` right now. This is the SAME "different loop" #6261's own
+           rebind fixes (see the module docstring / :meth:`_ensure_queue`) — but ``flush()``
+           itself never calls ``_ensure_queue``, so calling it from loop B does NOT trigger
+           #6261's carry-over: whatever the OLD loop (A) still had queued stays bound to A,
+           untouched, until something actually enqueues (``submit``/``submit_nowait``/
+           ``bind_to_running_loop``) FROM B and rebinds it THAT way. Before #6261, a queue left
+           behind like this was headed for silent loss the moment such a rebind happened; now it
+           is moved forward instead — but that is a property of the NEXT rebind, not of this
+           call. This early return still means only "not from this loop, not right now" — never
+           "already flushed" — and a caller that needs loop A's items actually driven onto disk
+           must call ``flush()`` FROM loop A before it ends, or trigger a rebind (any submit)
+           from loop B first and ``flush()`` again afterward. This method cannot tell those two
+           situations apart and does not pretend to.
+
         #6260: never hangs on a drainer that died mid-queue (cancelled by something else,
         e.g. ``AgentRegistry.shutdown``'s hard-cancel or loop teardown) — see
         :meth:`_drain_to_empty`."""
@@ -460,7 +590,9 @@ class DurabilityWorker:
         """Graceful shutdown. Drain every enqueued task (no in-flight write lost), then stop —
         via the SAME :meth:`_drain_to_empty` :meth:`flush` uses (#6260) — then cancel any
         still-running drainer. A no-op if never used, or if called on a different loop than the
-        one the queue is bound to (a dead loop — nothing to drain there).
+        one the queue is bound to — see :meth:`flush`'s own docstring (#6261) for why this early
+        return is "not from this loop", never evidence that a rebind lost anything: the carry-over
+        that answers #6261 happens on the NEXT rebind (``_ensure_queue``), not on this call.
 
         #6240 ⑵ (architect ruling, PR #6262 review): teardown gets an UNCONDITIONAL, one-time
         ``on_drain_end`` call even when NOTHING has changed since the last successful
