@@ -40,6 +40,22 @@ one check per N queued writes during a burst (the situation where a per-write co
 mattered), one check per write only when idle (where the cost never mattered). The worker itself
 carries no opinion about WHAT the hook checks — same substrate-agnostic discipline as the
 ``DurableWrite`` callable itself.
+
+#6240 ⑵ (architect ruling, issue #6240 comments 5807595460 + 5808598931): the SAME per-burst
+boundary, mirrored at the OTHER end of ``_drain()``. ``Session`` holds a DEDICATED worker for
+``history.jsonl`` (constructed separately from the WAL/snapshot/audit/media workers — same
+class, four separate instances, ``git grep 'DurabilityWorker(' -- src/`` shows the four call
+sites), so this hook costs the OTHER three substrates nothing: ``on_drain_end`` (below) is
+OPTIONAL, defaulted to ``None``, same discipline as ``on_drain_start``. Invoked once, right
+before ``_drain()`` self-terminates on an EMPTY queue (never on the ``CancelledError`` exit —
+a cancel mid-write is a #6261-owned hole, not this hook's concern; fsync-ing during teardown
+would race it). Because BOTH of ``_drain``'s callers — the self-terminating background task
+AND :meth:`_drain_to_empty`'s own inline-drain branch (``flush``/``aclose`` when no live
+drainer is left to hand the queue to) — bottom out in this SAME ``_drain()`` body, wiring the
+hook here (never on a background ``Task``'s ``add_done_callback``, which the inline branch
+never creates) is the ONE place that covers both. History's own use: fsync the durable append
+handle once per burst, not once per line — the fsync count is bounded by drain bursts, not by
+append count.
 """
 from __future__ import annotations
 
@@ -73,6 +89,7 @@ class DurabilityWorker:
         self, *, max_write_attempts: int = _WRITE_MAX_ATTEMPTS,
         retry_base_s: float = _WRITE_RETRY_BASE_S, retry_max_s: float = _WRITE_RETRY_MAX_S,
         on_drain_start: "Callable[[], Awaitable[None]] | None" = None,
+        on_drain_end: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         self._max_write_attempts = max_write_attempts
         self._retry_base_s = retry_base_s
@@ -82,6 +99,11 @@ class DurabilityWorker:
         # (the same class, constructed elsewhere) never touch this and pay
         # nothing.
         self._on_drain_start = on_drain_start
+        # #6240 ⑵: OPTIONAL, defaulted None — see module docstring. Only
+        # Session's dedicated history worker passes one today; the other
+        # three DurabilityWorker instances (WAL/snapshot/audit, media) never
+        # touch this and pay nothing.
+        self._on_drain_end = on_drain_end
         self._queue: "asyncio.Queue | None" = None
         self._drainer: "asyncio.Task | None" = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
@@ -192,11 +214,16 @@ class DurabilityWorker:
         internal getter ``call_soon`` raises "Event loop is closed". Draining via ``get_nowait``
         and exiting on empty avoids the leak entirely.
 
-        No-stranding: the ``QueueEmpty`` check + ``return`` are atomic (no ``await`` between), so a
-        concurrent ``submit`` cannot interleave there — an item enqueued while a prior one is
-        processing is seen on the next iteration; an item enqueued after the drainer exits is
-        picked up when the next submit re-kicks it (``_ensure_runtime`` restarts a ``done()``
-        drainer).
+        No-stranding: with ``on_drain_end`` unset, the ``QueueEmpty`` check + ``return`` are atomic
+        (no ``await`` between), so a concurrent ``submit`` cannot interleave there — an item
+        enqueued while a prior one is processing is seen on the next iteration; an item enqueued
+        after the drainer exits is picked up when the next submit re-kicks it (``_ensure_runtime``
+        restarts a ``done()`` drainer). With ``on_drain_end`` SET, its ``await`` DOES sit between
+        the check and the return — so a ``submit`` landing during that ``await`` would otherwise be
+        stranded (``_kick`` sees this drainer as not-``done()`` yet and declines to spawn a second
+        one, trusting THIS loop to pick the item up — a trust this exit was about to betray). The
+        re-check below (``if not self._queue.empty(): continue``) closes that window: the loop
+        re-enters instead of returning whenever the hook's own ``await`` let something else land.
 
         ``CancelledError`` MUST propagate (terminate the drainer): it is NOT a write failure.
         Swallowing it (catching ``BaseException``) made an earlier drainer immortal — a cancel
@@ -207,7 +234,17 @@ class DurabilityWorker:
         #6077 提案 6 follow-up: ``on_drain_start`` (if set) runs ONCE here, before the loop below
         processes any queued item — this IS the "once per burst" checkpoint (see module
         docstring): every ``_drain()`` call is exactly one such burst, since the drainer is
-        self-terminating and only re-``_kick``ed when a NEW item lands after it already exited."""
+        self-terminating and only re-``_kick``ed when a NEW item lands after it already exited.
+
+        #6240 ⑵: ``on_drain_end`` (if set) runs ONCE here too, right before the self-terminating
+        ``return`` on an EMPTY queue — the OTHER end of the same burst boundary. Both of this
+        method's callers (the background self-terminating drainer task, AND
+        :meth:`_drain_to_empty`'s own inline-drain branch, which calls ``await self._drain()``
+        directly with no intervening ``Task``) bottom out in THIS body, so wiring the hook here
+        — never externally, e.g. via a ``Task.add_done_callback`` the inline branch would never
+        create — is the one place that reaches both. Never runs on the ``CancelledError`` exit
+        below (a cancel is not "drained"; fsync-ing mid-teardown is #6261's own territory, not
+        this hook's — see :class:`DurabilityWorker`'s own module docstring)."""
         assert self._queue is not None
         if self._on_drain_start is not None:
             await self._on_drain_start()
@@ -215,7 +252,11 @@ class DurabilityWorker:
             try:
                 do_durable_write, fut = self._queue.get_nowait()
             except asyncio.QueueEmpty:
-                return  # drained → self-terminate (atomic with the check: no await between)
+                if self._on_drain_end is not None:
+                    await self._on_drain_end()
+                    if not self._queue.empty():
+                        continue  # something landed during the hook's own await -- re-drain it
+                return  # drained → self-terminate
             try:
                 await self._run_with_retry(do_durable_write)
             except asyncio.CancelledError:
