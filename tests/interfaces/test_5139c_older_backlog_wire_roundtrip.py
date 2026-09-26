@@ -180,6 +180,10 @@ async def test_has_more_extends_from_disk_past_the_in_memory_tail(tmp_path) -> N
         for i in range(10):
             session._append_history(ChatMessage(role="user", content=f"question {i}"))  # noqa: SLF001 - real durable-write seam, same as test_4387's own helper
             session._append_history(ChatMessage(role="assistant", content=f"answer {i}"))  # noqa: SLF001
+        # #6240 ③: await every write above landing before the disk-extend
+        # read below (_append_history's own disk write is now enqueued
+        # on a DurabilityWorker, not written inline).
+        await session.flush_history()
         full_log = list(session.history)
         session.history = session.history[-2:]  # bounded in-memory tail (#4387 Phase B ①)
         assert len(session.history) < len(full_log), (

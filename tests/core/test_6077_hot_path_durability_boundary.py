@@ -20,14 +20,16 @@ from). The structural tell used instead: a function that hands work to the
 ``DurabilityWorker`` WITHOUT awaiting it is, BY DEFINITION, on the hot-path
 side of the durability boundary — the awaited forms (``submit``, ``submit_
 durable``) can never be hot-path roots, so they need no exclusion. Three
-fire-and-forget names, `git grep`'d against ``src/`` (architect's own count,
-independently reproduced by :func:`_derive_hot_path_entrypoints` below):
+fire-and-forget names, `git grep`'d against ``src/`` (architect's own count
+at #6077 提案 4's own landing, independently reproduced by
+:func:`_derive_hot_path_entrypoints` below; #6240 ③ added a twelfth call
+site, ``Session._append_history``'s own ``submit_nowait``):
 
-    submit_nowait           5
+    submit_nowait           6
     submit_threadsafe       1
     submit_durable_nowait   5
     ---------------------------
-    total                  11  (0 false positives)
+    total                  12  (0 false positives)
 
 A naive ``\\.submit(`` needle DOES false-positive twice — ``hooks/external_
 fire.py``'s bridge and ``runtime/capability_visibility.py``'s ``concurrent.
@@ -46,7 +48,7 @@ relay this arc's own #6077 提案 3+6 PR modified.
 
 ## Population B — per-root prologue calls, ALSO derived
 
-For each of the 11 call sites, :func:`_prologue_calls_for` walks the
+For each of the 12 call sites, :func:`_prologue_calls_for` walks the
 enclosing function's OWN control-flow graph (see its docstring for the
 recognized shapes — guard clauses, try/except, if/else — and SCOPE below
 for what it does not) to collect every ``ast.Call`` node that executes on
@@ -142,6 +144,11 @@ HOT_PATH_ENTRYPOINTS: "frozenset[str]" = frozenset({
     "runtime/registry.py::AgentRegistry._record_agent_identity_generation",
     "runtime/services/snapshot_journal.py::SnapshotJournal.cut_generation",
     "runtime/services/snapshot_journal.py::SnapshotJournal.save_nowait",
+    # #6240 ③ (architect ruling, issue #6240 comment 5807710323):
+    # Session._append_history's own disk write moved onto a dedicated
+    # DurabilityWorker (mirrors EventStore.write, #6077 提案 3/6) -- a
+    # NEW root this fix creates, not a pre-existing one this arc missed.
+    "runtime/session.py::Session._append_history",
 })
 
 # ── Population B: every call in a root's prologue, human-classified ──
@@ -164,6 +171,13 @@ _CLASSIFICATION: "dict[str, str]" = {
     "copy.deepcopy(self._snapshot.to_payload())": "capture",  # this arc's own named example -- deliberate capture
     "self._snapshot.to_payload()": "capture",  # builds the outer dict deepcopy then captures -- feeds capture
     "self._build_snapshot_write_job()": "capture",  # vouches for the helper: its own body does capture, not durability
+    # #6240 ③: Session._append_history's own prologue (all in-memory
+    # session-state mutation / a pure derivation -- no filesystem or
+    # serialization work; the actual write moved off-loop into
+    # _write_history_record_owned, never opened by this gate's own SCOPE).
+    "self._enforce_per_message_content_cap(msg)": "capture",  # mutates msg.content/meta in place (byte cap) -- no I/O
+    "self.history.append(msg)": "capture",  # resident in-memory list mutation, not the durable write
+    "history_record(msg)": "capture",  # pure derivation (asdict + one conditional field drop) -- same role as model_dump above
     # representation — zero-cost framework/control query; no state grabbed,
     # no filesystem touched.
     "asyncio.get_running_loop()": "representation",
@@ -392,11 +406,19 @@ def _derive_prologue_calls() -> "dict[str, list[ast.Call]]":
 def test_the_root_population_is_not_vacuous() -> None:
     """Tier 2: question 4's own discipline (and witness ⑷, #6077 brief) --
     a derivation that silently found zero roots would make every assertion
-    below pass over an empty collection. Floor: every one of the 10 named
-    roots this module's own docstring lists (never a bare count -- a size
-    threshold is itself the kind of shape-pinning `test_tier_audit.py`
-    rejects; naming the actual roots is the real assertion, and it cannot
-    pass emptily since :data:`HOT_PATH_ENTRYPOINTS` itself is non-empty).
+    below pass over an empty collection. Floor: every one of the 11 named
+    roots :data:`HOT_PATH_ENTRYPOINTS` currently lists (never a bare count
+    -- a size threshold is itself the kind of shape-pinning
+    `test_tier_audit.py` rejects; naming the actual roots is the real
+    assertion, and it cannot pass emptily since
+    :data:`HOT_PATH_ENTRYPOINTS` itself is non-empty).
+
+    #6240 ③ added ``Session._append_history`` as an 11th root, AFTER the
+    RED text below was captured (#6077 提案 4's own original 10-root
+    witness) -- reproducing that exact strip today would additionally
+    list ``'runtime/session.py::Session._append_history'`` in the missing
+    set; not re-run, since the RED text is a historical record of the
+    original witness, not a live assertion (see the note under it).
 
     Strip-falsify (witness ④, in-file Edit only -- no ``git stash``/
     ``checkout``/``restore``): temporarily replaced :func:`_is_submit_call`

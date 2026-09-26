@@ -110,6 +110,11 @@ async def test_a_returned_tool_result_is_file_backed_and_its_durable_row_has_no_
 
     loop.feedback(_round(_BODY))
     await loop.persist_feedback()
+    # #6240 ③: _append_history's own disk write is now enqueued on a
+    # DurabilityWorker rather than written inline -- await it landing
+    # before the durable-line reads below (session.history_path.read_
+    # text() et al.).
+    await session.flush_history()
 
     (tool_msg,) = [m for m in session.history if m.role == "tool"]
     assert _BODY in tool_msg.text, "the resident row is the live cache — it keeps the body"
@@ -175,6 +180,9 @@ async def test_build_history_wire_is_the_same_live_and_after_a_restart(
     live_wire = live._loop_driver._history_buffer.build_history()
     (live_tool,) = [m for m in live_wire if m.get("role") == "tool"]
     assert _BODY in live_tool["content"], "test setup sanity: the live wire carries the body"
+    # #6240 ③: await the enqueued disk write landing before the SECOND
+    # session below reads the same durable store fresh via load_history().
+    await live.flush_history()
 
     restarted = _session("restart-agent", tmp_path)
     restarted.load_history()
@@ -256,6 +264,9 @@ async def test_a_latched_write_failure_keeps_the_returned_body_inline(
     loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
     loop.feedback(_round(_SMALL))
     await loop.persist_feedback()
+    # #6240 ③: await the history worker's own enqueued write before
+    # reading the durable line below.
+    await session.flush_history()
 
     (tool_msg,) = [m for m in session.history if m.role == "tool"]
     assert CONTENT_REF_META_KEY not in tool_msg.meta

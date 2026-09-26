@@ -46,12 +46,21 @@ from tests._support.agent_session import make_session
 from tests._support.slash import slash_ctx
 
 
-def _seeded_session(tmp_path: Path, *, n_turns: int = 3):
+async def _seeded_session(tmp_path: Path, *, n_turns: int = 3):
     """A real ``Session`` (real ``history/`` segment dir on disk) with
-    *n_turns* real appended turns."""
+    *n_turns* real appended turns, durably ON DISK by the time this
+    returns.
+
+    #6240 ③: ``_append_history``'s own disk write is enqueued on a
+    ``DurabilityWorker`` (fire-and-forget) rather than written inline
+    when a loop is running (every caller here is an ``async def`` test)
+    -- ``await``ing a flush here is what lets every caller below build
+    on "these turns are genuinely on disk" without each one repeating
+    the same ``await session.flush_history()`` call."""
     session = make_session(agent_name="alice", workspace_base_dir=tmp_path)
     for i in range(n_turns):
         session._append_history(ChatMessage(role="user", content=f"turn {i}"))
+    await session.flush_history()
     return session
 
 
@@ -70,7 +79,7 @@ async def test_slash_registered():
 async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
     """Tier 2: ``/clear-history`` (no confirm) preserves all data and
     prints a warning that asks for the confirm token."""
-    session = _seeded_session(tmp_path, n_turns=2)
+    session = await _seeded_session(tmp_path, n_turns=2)
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     assert cmd is not None
@@ -89,7 +98,7 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
 async def test_confirm_clears_history(tmp_path: Path):
     """Tier 2: ``/clear-history confirm`` wipes history in-memory and on
     disk — the WHOLE ``history/`` directory, not just the active file."""
-    session = _seeded_session(tmp_path, n_turns=3)
+    session = await _seeded_session(tmp_path, n_turns=3)
     history_dir = session.history_dir
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
@@ -112,7 +121,7 @@ async def test_confirm_removes_sealed_segments_too(tmp_path: Path):
     hydration would then read it right back in, so ``/clear`` would have
     looked like it worked and silently reverted. This is the deny-side
     witness for the fix, exercised at the slash-command level."""
-    session = _seeded_session(tmp_path, n_turns=1)
+    session = await _seeded_session(tmp_path, n_turns=1)
     sealed = session.history_dir / "history-000000000001-000000000008-n.jsonl"
     sealed.write_text('{"role": "user", "seq": 1, "content": "sealed"}\n')
 
@@ -128,7 +137,7 @@ async def test_confirm_preserves_unrelated_files(tmp_path: Path):
     """Tier 2: the slash MUST NOT touch events/, the WAL, or snapshots —
     those live elsewhere on disk. Place a sentinel file in each and
     verify it survives."""
-    session = _seeded_session(tmp_path, n_turns=1)
+    session = await _seeded_session(tmp_path, n_turns=1)
 
     # Sibling sentinels — these stand in for events/ / state/ etc.
     events_sentinel = tmp_path / "events.jsonl"
@@ -165,12 +174,13 @@ async def test_an_append_after_clear_lands_in_a_fresh_segment(tmp_path: Path) ->
     real session append path lands in a genuinely FRESH active segment
     (its own on-disk content is only the post-clear turn — the pre-clear
     turns are gone, not silently still sitting ahead of it)."""
-    session = _seeded_session(tmp_path, n_turns=5)
+    session = await _seeded_session(tmp_path, n_turns=5)
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     await cmd.handler(ctx, "confirm")
 
     session._append_history(ChatMessage(role="user", content="post-clear"))
+    await session.flush_history()
     on_disk = [ln for ln in session.history_path.read_text().splitlines() if ln.strip()]
     assert [ln for ln in on_disk if '"content": "post-clear"' in ln], (
         "the post-clear append must be present in the active segment"

@@ -171,6 +171,10 @@ async def test_scrolling_to_top_extends_from_disk_beyond_the_bounded_load(
         s = reg.get_session("alpha")
         assert s is not None
         _append_turns(s, 20)  # 40 durable messages
+        # #6240 ③: _append_history's own disk write is now enqueued on a
+        # DurabilityWorker rather than written inline -- await every
+        # write above landing before the disk-extend paging below.
+        await s.flush_history()
         full_log = list(s.history)
         s.history = s.history[-4:]  # bounded load: only the newest 4 in memory
         assert len(s.history) < len(full_log), (
@@ -231,6 +235,8 @@ async def test_search_finds_a_match_only_on_disk_beyond_the_bounded_load(
         s = reg.get_session("alpha")
         assert s is not None
         _append_turns(s, 60, needle="needle-only-on-disk")  # oldest turn
+        # #6240 ③: see the other call site's own comment above.
+        await s.flush_history()
         # Bounded load large enough that it does NOT all fit in one screen
         # (100x30) — with only a handful of in-memory messages, flowview's
         # own ReachedTop can fire immediately on mount (everything painted

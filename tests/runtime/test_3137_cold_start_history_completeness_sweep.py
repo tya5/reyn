@@ -149,6 +149,10 @@ async def test_restore_all_constructed_session_has_complete_history(tmp_path, mo
     ]
     for msg in turns:
         s1._append_history(msg)
+    # #6240 ③: each _append_history above enqueued its disk write on a
+    # DurabilityWorker rather than writing inline -- await them landing
+    # before the on-disk sanity read below.
+    await s1.flush_history()
     await s1.journal.record_intervention_dispatched(
         intervention_id="iv1", iv_dict=_iv_dict("iv1"),
     )

@@ -97,3 +97,55 @@ async def test_task_failure_surfaces_to_submitter():
     await w.submit(_ok)  # the worker survived the prior failure
     assert ran is True
     await w.aclose()
+
+
+@pytest.mark.asyncio
+async def test_flush_drains_inline_when_the_drainer_was_cancelled_before_it_ever_ran():
+    """Tier 2: #6260 -- ``flush()`` must not hang forever when the background drainer task
+    was cancelled by something OUTSIDE the worker (production reach: ``AgentRegistry.
+    shutdown``'s hard-cancel of child tasks, or ``asyncio.run``'s own teardown cancelling
+    every remaining task on ``/quit``/Ctrl-C) while writes were still queued. Pre-fix this
+    hung: ``queue.join()`` waits on ``task_done()`` calls a dead drainer will never make, and
+    ``flush()``'s own ``_kick()`` only ran BEFORE ``join()`` started waiting -- it could not
+    re-kick a drainer that died only AFTER that point (this test cancels it before ``flush()``
+    is even called, the simplest instance of that same class).
+
+    No sleep, no timeout, no retry-loop -- the drainer is cancelled BEFORE it ever gets to run
+    at all: no ``await`` happens between creating it (``submit_nowait``'s own ``_kick``) and
+    cancelling it, so asyncio's own cooperative scheduling guarantees DETERMINISTICALLY (not
+    by luck) that none of its body ever executed -- the same "no await between" argument
+    ``tests/runtime/test_6240_3_append_history_durability_worker.py``'s witness ① already
+    uses. The drainer task is found the way a real hard-cancel would find it -- diffing
+    ``asyncio.all_tasks()`` before/after enqueuing -- never by reading ``DurabilityWorker``'s
+    own private ``_drainer`` field.
+
+    Strip-falsify: temporarily reverted ``_drain_to_empty`` to the pre-#6260 body (unconditional
+    ``if not queue.empty(): self._kick()`` + ``await queue.join()``, no inline-drain fallback).
+    Observed: the test HUNG (no assertion text -- the whole run never returned; had to be
+    killed) instead of producing a red assertion, which is itself the defect this witness
+    exists to catch: ``flush()`` never returning is exactly the #6260 production hang.
+    Reverted immediately after observing; confirmed GREEN again."""
+    w = DurabilityWorker()
+    written: "list[str]" = []
+
+    def _mk(tag: str):
+        async def _task() -> None:
+            written.append(tag)
+        return _task
+
+    before = asyncio.all_tasks()
+    w.submit_nowait(_mk("a"))
+    w.submit_nowait(_mk("b"))
+    new_tasks = asyncio.all_tasks() - before
+    assert new_tasks, "at least one drainer task must have been created by _kick()"
+    drainer = new_tasks.pop()
+    assert not new_tasks, "_kick() must not have created more than one drainer task"
+    drainer.cancel()  # external hard-cancel -- before it ever ran
+
+    await w.flush()
+
+    assert written == ["a", "b"], (
+        "flush() must still drain every write queued before the drainer died, even "
+        f"though NO background task was left alive to do it -- got {written!r}"
+    )
+    await w.aclose()

@@ -701,7 +701,28 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: a live appender) -- a different class the residue gate's own name
 #: ("the residue SHRINKS") already excludes, and one only ``Session``
 #: itself (the handle's owner) can safely perform.
-_PUBLIC_MEMBER_CEILING = 131
+#: #6260 (architect ruling) adds ONE more: ``flush_history() -> None``
+#: (renamed from the private ``_flush_history_durability``, #6240 ③'s
+#: own DurabilityWorker-backed history flush). NOT the "publish _x as x"
+#: anti-pattern this gate's own module docstring warns against -- that
+#: pattern is about a slash handler reaching further into ``Session``;
+#: this gate's own failure mode does not apply here at all:
+#: ``grep -rn 'flush_history' src/reyn/interfaces/`` is ZERO hits -- no
+#: slash handler calls this, or ever will (it is a durability-drain
+#: barrier, not conversational surface). Every caller is ``Session``
+#: itself (``clear_history``'s own step 0, run()'s teardown) or
+#: ``CompactionController``, which receives it as an injected callable
+#: (``history_durability_flush=self.flush_history``), never reaches
+#: into ``Session`` beyond that one call. The reason it went public at
+#: all is CLAUDE.md's own testing policy, verbatim: "a test must not
+#: depend on private state ... if neither [a public surface nor a
+#: snapshot()-style read] exists, that absence is the finding" -- 30+
+#: call sites across 20 test files were ALREADY reaching this method
+#: through its underscore before #6260, which is exactly that finding,
+#: not a symmetry argument. Every one of those, and the production
+#: wiring above, now call this SAME public name; no private twin
+#: remains.
+_PUBLIC_MEMBER_CEILING = 132
 
 
 def test_session_public_surface_does_not_grow() -> None:

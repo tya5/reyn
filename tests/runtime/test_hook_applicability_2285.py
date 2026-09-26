@@ -89,7 +89,20 @@ async def test_hook_toggle_off_then_on(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_per_session_hooks_yaml_is_a_4th_layer(tmp_path, monkeypatch):
     """Tier 2: a hook defined in the per-session hooks.yaml (4th layer) appears in THIS session's
-    merged registry with scope 'per-session' — session-scoped hook definition."""
+    merged registry with scope 'per-session' — session-scoped hook definition.
+
+    #6260: this session's state dir is `mkdir`'d defensively before the write below, NOT
+    assumed to already exist from `spawn_session_recorded()` — since #6240 ③ moved the
+    spawn-time system message's own disk write (the thing that used to create this dir as a
+    synchronous side effect) onto `DurabilityWorker.submit_nowait` (fire-and-forget), whether
+    that dir exists by the time this line runs depends on asyncio scheduling, not on any
+    contract `spawn_session_recorded()` documents or any other caller relies on — every sibling
+    test in this repo that writes a session-local hooks.yaml already `mkdir`s first (e.g.
+    test_5213_hook_disable_layer_bypass.py, test_5222_hook_state_origin_aware.py); this was the
+    one test that omitted it and rode the coincidental synchronous timing instead (confirmed:
+    the background drain task lost the race and this assertion failed in 2/6 local runs
+    before this fix, same interpreter, no `-k`/ordering change -- reproducing the SAME
+    scheduling race, not a flake with an unnamed cause)."""
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
@@ -97,6 +110,7 @@ async def test_per_session_hooks_yaml_is_a_4th_layer(tmp_path, monkeypatch):
 
     # write a per-session hook at this session's state dir, then re-build the registry
     per_session = Path(s._snapshot_path).parent / "hooks.yaml"
+    per_session.parent.mkdir(parents=True, exist_ok=True)
     per_session.write_text(
         yaml.safe_dump({"hooks": [
             {"on": "turn_start", "name": "sesshook", "template_push": {"message": "x", "wake": True}},

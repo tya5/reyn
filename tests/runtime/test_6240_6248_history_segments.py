@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.history_segments import (
     SEGMENT_MAX_BYTES,
@@ -208,7 +210,8 @@ def test_appending_after_a_flat_file_exists_writes_to_the_segment_dir_not_the_fl
 # ── 5773552909, architect ruling on PR #6257's own review) ─────────────────
 
 
-def test_clear_history_then_append_lands_in_a_visibly_fresh_segment(
+@pytest.mark.asyncio
+async def test_clear_history_then_append_lands_in_a_visibly_fresh_segment(
     tmp_path: Path,
 ) -> None:
     """Tier 2: strip-falsifier target -- witness ①. After
@@ -233,8 +236,11 @@ def test_clear_history_then_append_lands_in_a_visibly_fresh_segment(
     for i in range(3):
         session._append_history(ChatMessage(role="user", content=f"pre-clear {i}"))
 
-    session.clear_history()
+    await session.clear_history()
     session._append_history(ChatMessage(role="user", content="post-clear"))
+    # #6240 ③ follow-up: this append is enqueued (loop running) -- await
+    # it landing before reading the fresh segment below.
+    await session.flush_history()
 
     on_disk = [
         json.loads(ln)
@@ -282,7 +288,8 @@ def test_appending_without_clearing_stays_in_the_same_segment(tmp_path: Path) ->
     )
 
 
-def test_clear_history_disk_failure_leaves_in_memory_history_untouched(
+@pytest.mark.asyncio
+async def test_clear_history_disk_failure_leaves_in_memory_history_untouched(
     tmp_path: Path,
 ) -> None:
     """Tier 2: strip-falsifier target -- witness ③ (architect: "現行コメ
@@ -310,6 +317,12 @@ def test_clear_history_disk_failure_leaves_in_memory_history_untouched(
     session = make_session(agent_name="omega3", workspace_base_dir=tmp_path)
     for i in range(2):
         session._append_history(ChatMessage(role="user", content=f"turn {i}"))
+    # #6240 ③ follow-up: land these on disk (real history_dir genuinely
+    # created) BEFORE wrapping history_dir below -- otherwise the wrap
+    # intercepts the STILL-QUEUED write's own directory creation with an
+    # AttributeError (no .mkdir on the fake), not the OSError this
+    # witness is actually about.
+    await session.flush_history()
     before = list(session.history)
 
     class _FailingIterdirPath:
@@ -331,7 +344,7 @@ def test_clear_history_disk_failure_leaves_in_memory_history_untouched(
 
     raised = False
     try:
-        session.clear_history()
+        await session.clear_history()
     except OSError:
         raised = True
     assert raised, "sanity: the disk step must actually raise for this witness to mean anything"

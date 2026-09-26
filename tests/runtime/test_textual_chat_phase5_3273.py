@@ -632,6 +632,10 @@ async def test_restore_source_is_authoritative_chat_log_gate_na(tmp_path, monkey
         session = await reg.attach("solo")
         session._append_history(ChatMessage(role="user", content="restore me please"))
         session._append_history(ChatMessage(role="assistant", content="here is your restore"))
+        # #6240 ③: both writes above enqueued their disk write on a
+        # DurabilityWorker rather than writing inline -- await them
+        # landing before the disk-drop-and-reload below.
+        await session.flush_history()
         # Prove the DISK log (history.jsonl) is the source: drop the in-memory
         # list and re-read from disk. If restore rode audit-events (which do not
         # carry assistant text), the reply text would be gone.
@@ -717,6 +721,9 @@ async def test_typed_failure_flag_round_trips_through_disk_history(tmp_path, mon
             role="tool", content="Error: disk full at 03:14, retrying write",
             name="read_file", tool_call_id="call_ok",
         ))
+        # #6240 ③: await both writes above landing before the disk
+        # round trip below.
+        await session.flush_history()
 
         # REAL disk round trip: drop the in-memory list, reload from history.jsonl.
         session.history.clear()
