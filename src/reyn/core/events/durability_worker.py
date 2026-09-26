@@ -288,7 +288,20 @@ class DurabilityWorker:
         re-kicks. If none ever comes, that write's OWN durability is unaffected (it still landed
         on disk via ``f.flush()``) but this hook's OWN promise for it is deferred, not lost: an
         ``os.fsync`` on the same fd/file syncs every prior unsynced write too, so any later burst's
-        end-of-burst job still covers it retroactively."""
+        end-of-burst job still covers it retroactively — architect ruling, PR #6262 review, with
+        TWO limits on that "retroactively": (1) SAME FILE ONLY — if the deferred write crosses a
+        ``Session``-owned seal (``_maybe_seal_active_history_segment``) before any later burst's
+        own end-of-burst job runs, that job fsyncs the NEW active segment's fd, a DIFFERENT file,
+        never reaching back into the now-sealed one; the seal itself closes this by fsync-ing the
+        segment it is about to seal, immediately before closing that handle for good (session.py —
+        the seal already knows it will never write to that file again, so it is the one remaining
+        place that can). (2) TEARDOWN — if no later burst EVER comes (the session ends instead),
+        there is no "next burst" to retroactively cover anything; :meth:`aclose`'s own unconditional
+        end-of-life ``on_drain_end`` call closes THIS gap (see its own docstring) rather than this
+        method being asked to somehow "wait for whatever comes next", which would (architect,
+        quoted in PR #6262's review) turn a burst boundary that is DECIDED the moment the
+        end-of-burst job is enqueued into one that is instead CHASED — the same overreach
+        :meth:`flush`'s own promise deliberately does not make."""
         assert self._queue is not None
         if self._on_drain_start is not None:
             await self._on_drain_start()
@@ -447,7 +460,35 @@ class DurabilityWorker:
         """Graceful shutdown. Drain every enqueued task (no in-flight write lost), then stop —
         via the SAME :meth:`_drain_to_empty` :meth:`flush` uses (#6260) — then cancel any
         still-running drainer. A no-op if never used, or if called on a different loop than the
-        one the queue is bound to (a dead loop — nothing to drain there)."""
+        one the queue is bound to (a dead loop — nothing to drain there).
+
+        #6240 ⑵ (architect ruling, PR #6262 review): teardown gets an UNCONDITIONAL, one-time
+        ``on_drain_end`` call even when NOTHING has changed since the last successful
+        :meth:`flush` — closing the one gap that method's own docstring's "retroactive coverage"
+        paragraph deliberately leaves open (a write landing strictly AFTER a burst's own
+        end-of-burst job was enqueued is left for the NEXT burst; if no next burst ever comes
+        because the session ends instead, nothing is left to retroactively cover it — architect:
+        "burst の終わりは *決める* もので *追いかける* ものでは在りません", the SAME reasoning
+        that keeps :meth:`flush` from being strengthened to chase every last write; teardown is
+        exempt only because it, uniquely, knows there is no "next chance").
+
+        This costs NO new line here: the ``await self._drain_to_empty()`` call directly below
+        (unchanged) already provides it, given how :meth:`_drain` behaves per #6240 ⑵'s queue-item
+        design. Once the background drainer has self-terminated (the steady state after any prior
+        :meth:`flush`/:meth:`aclose`), :meth:`_drain_to_empty` takes its OWN inline-drain branch —
+        a FRESH :meth:`_drain` call, unconditionally, regardless of whether the queue holds
+        anything — and that fresh call's very first ``QueueEmpty`` (immediate, if nothing is
+        queued) still enqueues-and-runs ONE end-of-burst job (the same fallback :meth:`_drain`'s
+        own docstring names for "a burst with ZERO real items ever dequeued"). If the drainer is
+        instead still ALIVE (``aclose()`` landing mid-burst), :meth:`_drain_to_empty`'s OTHER
+        branch just ``await``s ``queue.join()`` — and that already-running burst's OWN
+        end-of-burst job (enqueued the normal way, since real items were present) is what
+        ``join()`` waits for, so coverage holds there too, by the SAME argument :meth:`flush`'s
+        own witness already proves. Either way, by the time this call returns, one MORE
+        end-of-burst job has just run that did not exist before it. A no-op for the other 3
+        ``DurabilityWorker`` consumers (WAL/snapshot/audit, media): ``on_drain_end`` is ``None``
+        there, so the extra ``_drain()`` cycle this triggers still runs, but its own no-op branch
+        (``if self._on_drain_end is not None`` — see :meth:`_drain`) means it costs them nothing."""
         if self._queue is None or self._loop is None:
             return
         try:

@@ -92,6 +92,35 @@ sync. Not independently witnessed here (no test forces that exact
 sub-window); recorded as a structural fix per architect's own "the window
 does not disappear, only the silence does" instruction.
 
+PR #6262 review (2nd round, architect ruling on the ⑶ question this file's own
+"retroactive coverage" paragraph raised): ``flush()`` is NOT strengthened to
+chase every last write ("a burst's own range is DECIDED the moment its
+end-of-burst job is enqueued, never CHASED" -- the same reasoning that keeps
+this design from regressing into the FIRST cut's own post-loop hook). Two
+things ARE added instead, closing the two cases that reasoning leaves open:
+
+  - ``DurabilityWorker.aclose`` already runs ``on_drain_end`` ONE MORE time,
+    unconditionally, even when NOTHING has changed since the last successful
+    ``flush()`` -- teardown is the ONE caller that knows no further burst is
+    ever coming, so it may promise "everything written so far, full stop"
+    instead of "everything THIS burst owns". NO new line was needed: this
+    falls straight out of ``aclose()``'s pre-existing ``_drain_to_empty()``
+    call, given how ``_drain()`` behaves once the drainer is idle -- see
+    witness ⑧ below (and ``aclose()``'s own docstring) for the full argument,
+    including an EARLIER attempt at an explicit extra call that this witness
+    caught over-firing (3 calls instead of 2) and that was removed as a
+    result.
+  - ``Session._maybe_seal_active_history_segment`` (session.py) now fsyncs
+    the segment it is about to seal, immediately before closing that handle
+    forever -- the module docstring's own "retroactive coverage" argument
+    (an fsync on the SAME fd/file catches every prior unsynced write) has a
+    real limit: it is SAME FILE ONLY. A write that lands after the current
+    burst's end-of-burst job was enqueued, then crosses a seal before any
+    LATER burst's own job runs, is never retroactively covered -- that later
+    job's fsync targets the NEW active segment, a different file. Sealing is
+    the one place that already knows it is about to stop writing to THIS
+    file forever, so it closes the gap directly. Witness ⑦ below is this.
+
 Strip-falsify performed in-file via Edit -> observe RED -> Edit back
 (``git checkout``/``stash``/``restore`` never used, CLAUDE.md) for every
 witness; RED text recorded verbatim in each test's own docstring."""
@@ -108,6 +137,7 @@ import pytest
 from reyn.core.events.durability_worker import DurabilityWorker
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.history_segments import SEGMENT_MAX_BYTES, list_sealed_segments
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
@@ -134,6 +164,34 @@ def _wrap_fsync(monkeypatch: pytest.MonkeyPatch) -> "list[int]":
 
     def _tracking_fsync(fd: int) -> None:
         calls.append(fd)
+        orig_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", _tracking_fsync)
+    return calls
+
+
+def _wrap_fsync_with_inode(monkeypatch: pytest.MonkeyPatch) -> "list[tuple[int, int]]":
+    """Interpose the REAL ``os.fsync`` -- forwards to the genuine syscall,
+    records the ``(st_dev, st_ino)`` of the fd AT THE MOMENT of the fsync
+    call (via ``os.fstat`` on the still-open fd, before anything else
+    could close it) instead of the raw fd NUMBER ``_wrap_fsync`` above
+    uses. A raw fd number is not a reliable identity across a close +
+    reopen inside the SAME test process: POSIX hands out the LOWEST
+    available fd number, so a fd closed right after being fsync'd (the
+    seal's own ``close()``) is very likely to be handed straight back out
+    to the VERY NEXT ``open()`` (the fresh active segment's own reopen,
+    same call) -- a plain fd-number match would then also match that
+    unrelated LATER file's own, entirely legitimate fsync, passing
+    vacuously even with the seal's own fsync call removed (found
+    EMPIRICALLY while building witness ⑦ below -- an early fd-number-based
+    version of that test stayed GREEN with the fix deleted; see that
+    test's own docstring for the observed false-positive)."""
+    orig_fsync = os.fsync
+    calls: "list[tuple[int, int]]" = []
+
+    def _tracking_fsync(fd: int) -> None:
+        st = os.fstat(fd)
+        calls.append((st.st_dev, st.st_ino))
         orig_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", _tracking_fsync)
@@ -408,3 +466,158 @@ async def test_flush_returns_normally_with_no_on_drain_end_configured() -> None:
         f"on_drain_end configured at all -- got {written!r}"
     )
     await w.aclose()
+
+
+
+
+@pytest.mark.asyncio
+async def test_a_write_that_crosses_a_seal_gets_the_sealed_segment_fsynced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: witness ⑦ (architect ruling, PR #6262 review round 2) -- a
+    write that crosses a seal boundary gets the ABOUT-TO-BE-SEALED
+    segment's handle fsync'd BEFORE it is closed and renamed away. This
+    is the gap witnesses ①/②/⑤ do not reach: the drain-end hook's own
+    "same fd/file" retroactive-coverage argument (module docstring) only
+    covers writes that stay in the SAME active segment ACROSS bursts --
+    once a write crosses a seal, any LATER burst's own end-of-burst
+    fsync targets the NEW active segment (a different file, a different
+    fd), never reaching back into the now-sealed one.
+
+    ALL appends here land in ONE burst (no ``await`` between any of
+    them -- deterministic per asyncio's own cooperative scheduling,
+    same argument witness ① above already relies on), flushed only
+    ONCE at the very end. This is load-bearing, not incidental: an
+    EARLIER version of this test flushed after EVERY append (mirroring
+    ``test_6240_6248_history_segments.py``'s own crossing test) and
+    STAYED GREEN even with the seal's own fsync line deleted entirely
+    -- because EACH of those per-append flushes' own end-of-burst job
+    (an entirely legitimate, unrelated fsync -- witness ① above) had
+    already fsync'd the not-yet-sealed file long before the seal itself
+    ever ran, leaving nothing for the seal's own fsync to uniquely
+    prove. With everything in ONE burst instead, the burst's single
+    end-of-burst job runs exactly once, at the very end, and by then the
+    active segment is the NEW (post-seal) file -- so the sealed
+    segment's own content has no OTHER fsync opportunity at all.
+
+    Witnessed via INODE identity (``_wrap_fsync_with_inode`` above), NOT
+    the raw fd number witnesses ①/② use -- see that helper's own
+    docstring for why a plain fd match is a SEPARATE false-witness risk
+    here (the freshly reopened active segment, opened moments after the
+    sealed one's fd was closed, is likely handed the SAME fd number
+    back by the OS).
+
+    Real seal (``SEGMENT_MAX_BYTES`` boundary crossed with real
+    content, the same message size ``test_6240_6248_history_segments.
+    py``'s own crossing test uses). Every sealed segment produced (in
+    case more than one boundary is crossed across the 8 messages
+    enqueued) is checked -- not just the first.
+
+    Strip-falsify: temporarily removed the ``os.fsync(self._history_
+    append_fh.fileno())`` call added to ``Session._maybe_seal_active_
+    history_segment`` (session.py), right before its own ``.close()``.
+    Observed RED (verbatim -- the target is the SEALED segment's inode;
+    the one recorded call is the burst's single end-of-burst job, which
+    fsync'd the NEW active segment's own, different inode instead)::
+
+        AssertionError: expected sealed segment
+        history-000000000001-000000000004-n.jsonl's INODE to have been
+        fsync'd before it was closed and renamed away -- got no
+        matching call (target=(16777234, 212093142), all
+        calls=[(16777234, 212093143)]).
+        assert []
+
+    Reverted immediately after observing (restored the ``os.fsync(...)``
+    call); confirmed GREEN again."""
+    calls = _wrap_fsync_with_inode(monkeypatch)
+    session = _session(tmp_path)
+
+    big = "x" * (SEGMENT_MAX_BYTES // 4)
+    for i in range(8):
+        session._append_history(ChatMessage(role="user", content=big, ts=_now()))
+
+    await session.flush_history()  # ONE flush -- the WHOLE burst drains here
+
+    sealed = list_sealed_segments(session.history_dir)
+    assert sealed, "sanity: expected at least one sealed segment from this single burst"
+
+    for seg in sealed:
+        seg_stat = seg.path.stat()
+        seg_inode = (seg_stat.st_dev, seg_stat.st_ino)
+        matching = [c for c in calls if c == seg_inode]
+        assert matching, (
+            f"expected sealed segment {seg.path.name}'s INODE to have been "
+            f"fsync'd before it was closed and renamed away -- got no "
+            f"matching call (target={seg_inode!r}, all calls={calls!r})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_aclose_calls_on_drain_end_unconditionally_even_with_an_empty_queue() -> None:
+    """Tier 2: witness ⑧ (architect ruling, PR #6262 review round 2) --
+    ``DurabilityWorker.aclose()`` runs ``on_drain_end`` ONE more time,
+    UNCONDITIONALLY, even when the queue is ALREADY empty and no burst is
+    currently in flight (a previous, unrelated submit already ran its
+    own end-of-burst job to completion). This is the ⑴ half of the
+    review's answer to this file's own ⑶ question: teardown is the ONE
+    caller that knows no FURTHER burst is ever coming, so it may promise
+    "everything written so far, full stop" -- a promise ``flush()``/
+    ``_drain()`` deliberately do NOT make (a burst's own range is decided
+    the moment its end-of-burst job is enqueued, never chased -- see the
+    module docstring's own "retroactive coverage" paragraph and the
+    ``durability_worker.py`` docstring this mirrors).
+
+    NO new line was needed in ``aclose()`` itself to get this -- an
+    EARLIER attempt added an explicit ``if self._on_drain_end is not
+    None: await self._on_drain_end()`` at its very end, and this test
+    caught THAT attempt over-firing (3 calls instead of 2): ``aclose()``
+    already calls ``_drain_to_empty()`` (unchanged), and once the
+    background drainer has self-terminated (the steady state after any
+    prior ``flush()``), that method's own inline-drain branch runs a
+    FRESH ``_drain()`` call UNCONDITIONALLY -- whose very first
+    ``QueueEmpty`` (immediate, since nothing is queued) still enqueues
+    and runs one end-of-burst job regardless (the SAME fallback
+    ``_drain()``'s own docstring names for "a burst with ZERO real items
+    ever dequeued"). The explicit line only added a REDUNDANT third
+    call, so it was removed instead of kept -- see ``aclose()``'s own
+    docstring for the full argument, including the OTHER branch
+    (drainer still alive) where coverage comes from the SAME argument
+    ``flush()``'s own witness ⑤ already proves.
+
+    Strip-falsify: temporarily added ``if self._queue.empty(): return``
+    to ``DurabilityWorker._drain_to_empty`` (durability_worker.py),
+    right after the ``_inline_draining`` early-return and before the
+    unconditional inline-drain fallback -- skipping the re-drain this
+    property depends on precisely when the queue is already empty.
+    Observed RED (verbatim), with the OTHER 7 tests in this file still
+    GREEN (isolating that this strip affects ONLY this property, not
+    witnesses ①-⑦'s own non-empty-queue scenarios)::
+
+        AssertionError: aclose() must call on_drain_end one more time,
+        unconditionally, even with an empty queue -- got 1 call(s),
+        expected 2.
+        assert 1 == 2
+
+    Reverted immediately after observing (removed the added line);
+    confirmed GREEN again."""
+    calls = 0
+
+    async def _on_drain_end() -> None:
+        nonlocal calls
+        calls += 1
+
+    async def _noop() -> None:
+        return None
+
+    w = DurabilityWorker(on_drain_end=_on_drain_end)
+    w.submit_nowait(_noop)
+    await w.flush()  # drains the first (and only, so far) burst -- on_drain_end already ran once
+
+    assert calls == 1, f"sanity: flush() should have already run on_drain_end once -- got {calls}"
+
+    await w.aclose()  # the queue is now EMPTY -- no new burst -- but aclose() still calls it again
+
+    assert calls == 2, (
+        f"aclose() must call on_drain_end one more time, unconditionally, even "
+        f"with an empty queue -- got {calls} call(s), expected 2"
+    )

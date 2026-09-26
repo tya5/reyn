@@ -4772,7 +4772,28 @@ class Session:
         segment has received no appends since it was last opened/sealed
         (``_active_segment_max_seq is None`` — sealing an empty file would
         produce a degenerate ``min_seq > max_seq`` name with nothing
-        real to bound)."""
+        real to bound).
+
+        #6240 ⑵ (architect ruling, PR #6262 review): ``os.fsync`` right
+        BEFORE closing the handle below — a closed handle's ``fileno()``
+        raises, so this is the last point this method ever has one to
+        fsync. This closes the one gap :meth:`_fsync_history_append_
+        handle_on_drain_end`'s own "retroactive coverage" argument
+        (fsync-ing the SAME fd/file later syncs every prior unsynced
+        write too) does NOT cover: a write that lands strictly after the
+        current burst's end-of-burst job was already enqueued, and THEN
+        crosses a seal before any LATER burst's own end-of-burst job
+        runs. That later job fsyncs the NEW active segment's fd — a
+        DIFFERENT file — never reaching back into the now-sealed one.
+        Sealing is the one place that already knows it is about to stop
+        writing to THIS file forever, so it is the natural (and only
+        remaining) place to close that gap; ``/clear``'s own history
+        deletion needs no equivalent (there is nothing left to fsync once
+        the file is gone). This runs OFF the loop already — this whole
+        method is invoked from :meth:`_write_history_record_owned`, which
+        is either genuinely synchronous (the no-running-loop fallback) or
+        already dispatched via ``asyncio.to_thread`` — so no separate
+        ``to_thread`` wrapping is needed here."""
         if self._history_append_fh is None:
             return
         if self._active_segment_max_seq is None:
@@ -4785,6 +4806,7 @@ class Session:
 
         if size < SEGMENT_MAX_BYTES:
             return
+        os.fsync(self._history_append_fh.fileno())
         self._history_append_fh.close()
         self._history_append_fh = None
         sealed_name = sealed_segment_name(
