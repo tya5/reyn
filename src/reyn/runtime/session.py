@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 import tempfile
@@ -1706,7 +1707,24 @@ class Session:
         # own fix (``spill_turn_content`` returns its record instead of
         # appending it) was what closed the last one.
         from reyn.core.events.durability_worker import DurabilityWorker
-        self._history_durability_worker = DurabilityWorker()
+        # #6240 ⑵ (architect ruling, issue #6240 comments 5807595460 +
+        # 5808598931): ``history.jsonl`` is the ONE durable copy of chat
+        # turns -- the 13 WAL-event kinds carry none of them (inbox /
+        # chain / intervention / next_turn_context only), so nothing else
+        # could reconstruct a lost turn after a crash. ``fsync`` closes
+        # that gap. Deliberately NOT keyed on ``turn_settled`` (that fires
+        # for every turn kind but MISSES the 5 ``_append_history`` call
+        # sites outside the turn loop -- inter_agent_messaging.py x4,
+        # intervention_handler.py x1 -- see the issue comment above);
+        # ``on_drain_end`` is the "queue is empty" boundary the worker
+        # already has (mirrors ``EventStore``'s own ``on_drain_start``,
+        # #6077 提案 6 follow-up), so it is reached by BOTH turn-loop and
+        # off-turn appends alike, and by construction never fires more
+        # often than once per drain burst regardless of how many lines a
+        # burst wrote.
+        self._history_durability_worker = DurabilityWorker(
+            on_drain_end=self._fsync_history_append_handle_on_drain_end,
+        )
         self.events_dir = (  # PR20: audit events dir, created lazily by EventStore on first write
             # #3705: anchored on the same root as workspace_dir — was a bare
             # relative `Path(".reyn")`, silently ignoring workspace_state_dir.
@@ -4578,6 +4596,104 @@ class Session:
         #6077 提案 3/6)."""
         await asyncio.to_thread(self._write_history_record_owned, seq, record, role)
 
+    async def _fsync_history_append_handle_on_drain_end(self) -> None:
+        """The history :class:`~reyn.core.events.durability_worker.
+        DurabilityWorker`'s ``on_drain_end`` hook (#6240 ⑵, architect
+        ruling, issue #6240 comments 5807595460 + 5808598931; PR #6262
+        review corrected the ORIGINAL ruling's own boundary placement —
+        see :meth:`~reyn.core.events.durability_worker.DurabilityWorker.
+        _drain`'s docstring for the mechanism) — fsyncs this session's OWN
+        currently-open append handle (:meth:`_history_append_handle`'s
+        cache, :attr:`_history_append_fh`) once every time the worker's
+        queue drains to empty, off the loop (``asyncio.to_thread``, same
+        discipline as the write itself).
+
+        Because this is now ENQUEUED as an ordinary queue item (not
+        called directly from a post-loop branch — the #6262 review fix),
+        ``DurabilityWorker.flush()``/``aclose()`` (both ``await queue.
+        join()``) do not return until THIS coroutine has itself
+        completed — the property the ORIGINAL placement lacked (a
+        ``flush()`` that returned before this ever ran). ``run()``'s
+        teardown (``await flush_history()`` before
+        :meth:`_invalidate_history_append_handle` closes the handle) and
+        :meth:`clear_history`'s own flush-before-delete step (#6257) both
+        depend on exactly this — closing #6240 ⑴/⑵'s two faces of the
+        SAME gap (architect ruling: fix once, here, never separately).
+
+        A no-op when nothing is open (``_history_append_fh is None`` —
+        no append has ever landed against this handle, or it was just
+        closed by a mid-session seal/teardown): there is nothing to
+        fsync, and opening one here just to fsync it would be a write
+        this hook never made.
+
+        ``fh.fileno()`` is called INSIDE the thread body (``_fsync_fh``
+        below), never eagerly on the calling coroutine before ``await
+        asyncio.to_thread(...)`` starts (the PR's own first cut did this,
+        and review caught it): the ORIGINAL shape evaluated ``fh.
+        fileno()`` before dispatch, so if the handle was closed WHILE the
+        fsync ran off-loop (a #6248 seal, or ``clear_history``'s own
+        close), the captured fd NUMBER could already have been reused by
+        a freshly-opened file (the NEXT active segment) by the time the
+        thread's ``os.fsync`` call actually ran — silently syncing the
+        WRONG file while returning success. Calling ``fh.fileno()`` from
+        inside the thread instead makes a closed handle raise
+        ``ValueError`` there (Python's own file objects raise on
+        ``fileno()`` once closed) — turning "silently syncs a different
+        file" into "fails loudly", which (since this job runs through
+        ``DurabilityWorker._run_with_retry`` like any other queued write,
+        #6262 review) reaches the SAME retry/escalation path a real
+        write's ``OSError`` would. ⚠️ The race window itself (between
+        this thread's own ``fh.fileno()`` call and its ``os.fsync`` call)
+        is NOT eliminated — it is only made loud instead of silent; a
+        handle closed in that exact sub-window would still, in principle,
+        fsync a reused fd. Closing the window itself is out of this
+        method's scope.
+
+        Why THIS boundary (never per-line, never ``turn_settled``): the
+        13 WAL-event kinds carry no chat-turn payload at all — a crash
+        cannot recover a lost turn from the WAL — so ``history.jsonl`` is
+        this data's ONE durable copy, unlike an audit-event (where
+        per-line fsync was ruled excessive, #6077). ``turn_settled``
+        looked like the natural "this turn is done" signal but MISSES 5
+        ``_append_history`` call sites that fire outside the turn loop
+        entirely (``inter_agent_messaging.py`` x4, ``intervention_
+        handler.py`` x1) — those would stay un-fsync'd until whatever
+        NEXT turn happened to settle, or forever if none does. The
+        worker's own drain-empty boundary has no such blind spot: every
+        ``_append_history`` call, turn-loop or not, enqueues onto this
+        SAME worker, so every one of them is covered by the SAME
+        boundary this hook fires at. It also does not promise MORE than
+        the owner's own definition needs ("history visible to the LLM
+        never reverts" — the LLM only ever sees history at the START of
+        the NEXT turn, and a drain-empty this far ahead of that already
+        satisfies it with room to spare) — awaiting this from
+        ``turn_settled`` itself would be a STRONGER promise ("durable by
+        the time THIS turn returns") nobody asked for.
+
+        Bounded, not per-line: N appends inside one burst (no ``await``
+        between them, e.g. a turn's user/agent/tool/summary rows) drain
+        in a single ``_drain()`` call and reach this hook exactly ONCE —
+        never once per line. See ``DurabilityWorker._drain``'s own
+        docstring for why this same body is also the inline-drain exit
+        ``flush()``/``aclose()`` reach when the background drainer has
+        already died (#6260) — there is only the one convergence point,
+        so this hook is never skipped on that path either.
+
+        Deliberately NOT reached on ``_drain``'s ``CancelledError`` exit
+        (a cancel is not "drained"): fsync-ing mid-cancellation would
+        race whatever teardown triggered the cancel — see
+        ``DurabilityWorker``'s own module docstring. That gap is #6261's
+        territory, not this hook's; it is a known, named hole, not an
+        oversight."""
+        fh = self._history_append_fh
+        if fh is None:
+            return
+
+        def _fsync_fh() -> None:
+            os.fsync(fh.fileno())
+
+        await asyncio.to_thread(_fsync_fh)
+
     async def flush_history(self) -> None:
         """Wait until every :meth:`_append_history` write enqueued so far
         has actually landed on disk (mirrors ``EventStore.flush`` /
@@ -4656,7 +4772,28 @@ class Session:
         segment has received no appends since it was last opened/sealed
         (``_active_segment_max_seq is None`` — sealing an empty file would
         produce a degenerate ``min_seq > max_seq`` name with nothing
-        real to bound)."""
+        real to bound).
+
+        #6240 ⑵ (architect ruling, PR #6262 review): ``os.fsync`` right
+        BEFORE closing the handle below — a closed handle's ``fileno()``
+        raises, so this is the last point this method ever has one to
+        fsync. This closes the one gap :meth:`_fsync_history_append_
+        handle_on_drain_end`'s own "retroactive coverage" argument
+        (fsync-ing the SAME fd/file later syncs every prior unsynced
+        write too) does NOT cover: a write that lands strictly after the
+        current burst's end-of-burst job was already enqueued, and THEN
+        crosses a seal before any LATER burst's own end-of-burst job
+        runs. That later job fsyncs the NEW active segment's fd — a
+        DIFFERENT file — never reaching back into the now-sealed one.
+        Sealing is the one place that already knows it is about to stop
+        writing to THIS file forever, so it is the natural (and only
+        remaining) place to close that gap; ``/clear``'s own history
+        deletion needs no equivalent (there is nothing left to fsync once
+        the file is gone). This runs OFF the loop already — this whole
+        method is invoked from :meth:`_write_history_record_owned`, which
+        is either genuinely synchronous (the no-running-loop fallback) or
+        already dispatched via ``asyncio.to_thread`` — so no separate
+        ``to_thread`` wrapping is needed here."""
         if self._history_append_fh is None:
             return
         if self._active_segment_max_seq is None:
@@ -4669,6 +4806,7 @@ class Session:
 
         if size < SEGMENT_MAX_BYTES:
             return
+        os.fsync(self._history_append_fh.fileno())
         self._history_append_fh.close()
         self._history_append_fh = None
         sealed_name = sealed_segment_name(
