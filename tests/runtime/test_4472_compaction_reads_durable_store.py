@@ -122,13 +122,36 @@ async def _turn(session: Session, state_log: StateLog, text: str) -> int:
     # #6240 ③: every call site below drives this via its OWN
     # `asyncio.run(_turn(...))` -- a SEPARATE loop each call.
     # DurabilityWorker.submit_nowait's own rebind-on-new-loop
-    # (`_ensure_queue`) drops whatever was still queued on the OLD loop
-    # when the NEXT asyncio.run() rebinds it (#6261) -- so a write left
-    # queued when THIS asyncio.run() call ends could be silently lost
-    # before the next turn's own asyncio.run() ever gets a chance to
-    # drain it. Flushing here, inside the SAME asyncio.run() call that
-    # enqueued it, is what makes each turn's own durable write land
-    # before this coroutine (and the loop underneath it) ever tears down.
+    # (`_ensure_queue`) USED TO drop whatever was still queued on the OLD
+    # loop when the NEXT asyncio.run() rebound it -- #6261 (architect
+    # ruling) fixed that class (the item is now carried forward, not
+    # discarded). #6261's own closing comment re-derived whether this
+    # flush is still needed and found it is NOT REMOVABLE ON THIS
+    # EVIDENCE: this test file stays green with the flush deleted
+    # entirely -- BUT it ALSO stayed green with #6261's own fix reverted
+    # (`_ensure_queue` restored to its pre-#6261, discard-on-rebind body),
+    # which means removing this flush is not actually exercising the
+    # #6261 defect either way. Root cause: the durable-write callable
+    # writes its CONTENT synchronously (`f.write`) before its own
+    # `await asyncio.to_thread(os.fsync, ...)` -- and the drainer task
+    # gets at least one real step during ANY `asyncio.run()`'s own
+    # teardown (`_cancel_all_tasks` schedules pending tasks before
+    # closing the loop) even with no explicit flush, so the write's
+    # CONTENT lands on disk (visible to a later synchronous read, via
+    # the OS page cache) regardless of whether the queued item's
+    # bookkeeping (`task_done()`/the awaited future) ever completes. This
+    # is the SAME "non-deterministic evidence" class
+    # `test_compaction_flush_guard_actually_invokes_the_history_flush_
+    # wiring` (tests/runtime/test_6240_3_append_history_durability_
+    # worker.py) already named and rejected for a sibling scenario ("the
+    # drainer consistently won that race") -- an accidental green is not
+    # a proof of durability. Keeping this flush is therefore NOT a
+    # #6261 workaround (#6261 itself is fixed); it is what makes each
+    # turn's write ACTUALLY DURABLE (not merely landed in the page cache)
+    # before this coroutine's own loop tears down -- a genuine guarantee
+    # this test's use of `_durable_active_history_after` (a real disk
+    # read) still needs, kept rather than traded for a scheduling-luck
+    # green.
     await session.flush_history()
     return session.history[-1].meta["wal_seq"]
 
