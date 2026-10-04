@@ -153,6 +153,15 @@ async def test_backward_prepend_is_not_immediately_evicted(tmp_path, monkeypatch
     for i in range(10):
         await _turn(s, state_log, f"turn {i}")
 
+    # #6270: extend_history_backward reads history.jsonl FROM DISK — since
+    # #6260 moved _append_history's disk write onto a DurabilityWorker, "the
+    # 10 turns above are on disk" is no longer true the instant _turn()
+    # returns; it becomes true once flush_history()'s barrier resolves.
+    # Without this, the disk read below could race the worker and see fewer
+    # than 10 lines (a duration-free barrier per CLAUDE.md: "wait on the
+    # condition unboundedly", not a sleep/attempts loop).
+    await s.flush_history()
+
     # Simulate a bounded resident set (as if some had already been evicted
     # or never loaded), then explicitly page back — mirrors
     # test_4387_active_branch_history_extend_on_demand.py's own precedent.
@@ -264,6 +273,16 @@ async def test_active_branch_history_survives_wal_truncation_after_real_eviction
     (``_active_branch_history``, which must extend self.history backward
     past what eviction removed) → X survives (turns 4-10 stay hidden,
     turns 1-3 correctly re-hydrated from disk despite having been evicted).
+
+    #6270: intermittently red under CI's ``-n auto`` (never in a single
+    direct run) after #6260 moved ``_append_history``'s disk write onto a
+    DurabilityWorker — order/timing-dependent, not a semantic break:
+    ``_active_branch_history``'s backward-hydrate reads ``history.jsonl``
+    from disk, and under load the worker sometimes had not yet drained
+    turn 12's write when that read ran, so it came back missing. The fix
+    is the ``flush_history()`` barrier below (a wait ON THE CONDITION, not
+    a duration) — it turns "should already be on disk" from an assumption
+    into a fact this test establishes itself before reading.
     """
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
@@ -282,6 +301,19 @@ async def test_active_branch_history_survives_wal_truncation_after_real_eviction
 
     for i in range(11, 14):
         await _turn(s, state_log, f"turn {i}")
+
+    # #6270 (architect ruling): this sanity assert reads DISK-rehydrated
+    # content (``_visible_texts`` -> ``_active_branch_history`` ->
+    # ``_load_older_entries``, which reads ``history.jsonl``). Since #6260
+    # moved ``_append_history``'s disk write onto a DurabilityWorker, "turns
+    # 1-13 are on disk" is no longer guaranteed the instant the loop above
+    # returns — it becomes a fact only once this barrier resolves. Before
+    # #6260 this assert measured a synchronous invariant; now, without the
+    # barrier, it measures a RACE (CI caught this under xdist load: turn 12
+    # was intermittently missing because its disk write had not yet landed
+    # when the read below ran). ``flush_history()`` waits on the condition
+    # unboundedly (CLAUDE.md) — not a sleep/attempts/range(N) duration.
+    await s.flush_history()
 
     assert _visible_texts(s) == [f"turn {i}" for i in (1, 2, 3, 11, 12, 13)], (
         "sanity: turns 4-10 abandoned, 1-3 + 11-13 active, before truncation "
