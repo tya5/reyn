@@ -8,6 +8,10 @@ anchor (robust vs fragile after-the-fact WAL/history mining). Turn checkpoints
 only (plan-step/phase pass no user message). Back-compatible: legacy str-valued
 anchor files load with full = "" (edit-prefill degrades to empty = manual re-type).
 
+#6265: ``full`` is cut to 4,000 chars by the same ``truncate_anchor`` mechanism
+as ``anchor`` (line breaks preserved, unlike the 1f preview); ``full_truncated``
+witnesses whether a given entry's cut fired.
+
 Real AnchorStore + SnapshotJournal (no mocks); mirrors tests/core/test_anchor_text_1547.py.
 """
 from __future__ import annotations
@@ -69,6 +73,79 @@ def test_prune_drops_full_with_the_entry(tmp_path):
     store.prune_below(20)
     assert store.get(10) == "" and store.get_full(10) == ""   # 10 gone entirely
     assert store.get_full(20) == "b-full"                      # 20 retained
+
+
+# ── #6265: full is capped, and the cut is witnessed ────────────────────────────
+
+
+def test_get_full_is_cut_not_stored_verbatim(tmp_path):
+    """Tier 2: capture() caps ``full`` the same way ``anchor`` is capped — an
+    oversized paste reads back shorter than what was captured, as a prefix of
+    it, ending in the truncation marker — not verbatim.
+
+    Before #6265, ``full`` had no cap at all: this is the direct regression
+    witness for the defect the issue names (anchor truncated, full was not).
+    """
+    store = AnchorStore(tmp_path / "anchors.json")
+    huge = "x" * 5000
+    store.capture(10, "anchor text", full=huge)
+    result = store.get_full(10)
+    assert result != huge                        # not stored verbatim
+    assert len(result) < len(huge)                # actually shortened
+    assert result.endswith("…")                   # truncation marker appended
+    assert huge.startswith(result[:-1])            # a genuine prefix, not reformatted
+
+
+def test_full_truncated_flag_lets_a_consumer_tell_cut_from_complete(tmp_path):
+    """Tier 2: the 2c edit-prefill consumer must be able to DETECT a cut copy
+    from ``full_truncated(seq)`` — not by re-deriving it from ``get_full``'s
+    returned length, which a naive consumer could get wrong at the boundary.
+    """
+    store = AnchorStore(tmp_path / "anchors.json")
+    store.capture(1, "short", full="well under the cap")
+    store.capture(2, "long", full="y" * 5000)
+
+    assert store.full_truncated(1) is False
+    assert store.full_truncated(2) is True
+
+
+def test_full_at_exactly_the_limit_is_not_truncated(tmp_path):
+    """Tier 2: a ``full`` of exactly 4,000 chars is stored complete — the cap is
+    an upper bound, not an off-by-one trap."""
+    store = AnchorStore(tmp_path / "anchors.json")
+    exact = "z" * 4000
+    store.capture(1, "a", full=exact)
+    assert store.get_full(1) == exact
+    assert store.full_truncated(1) is False
+
+
+def test_full_preserves_line_breaks_when_truncation_does_not_fire(tmp_path):
+    """Tier 2: unlike ``anchor`` (always collapsed to one line for the timeline
+    row), an untruncated ``full`` keeps the user's original line breaks intact —
+    the 2c edit-prefill re-populates an input box, where reformatting the text
+    being handed back for editing would itself be a correctness bug."""
+    store = AnchorStore(tmp_path / "anchors.json")
+    multi_line = "line one\nline two\nline three"
+    store.capture(1, "a", full=multi_line)
+    assert store.get_full(1) == multi_line
+
+
+def test_legacy_str_valued_file_full_truncated_is_false(tmp_path):
+    """Tier 2: a pre-2c legacy entry (str value) has no ``full`` at all, so
+    ``full_truncated`` must default to False — nothing was cut because nothing
+    full-length was ever stored, and a stray True would mislead the consumer."""
+    path = tmp_path / "anchors.json"
+    path.write_text(json.dumps({"7": "legacy truncated text"}), encoding="utf-8")
+    store = AnchorStore(path)
+    assert store.full_truncated(7) is False
+
+
+def test_full_truncated_unknown_seq_is_false(tmp_path):
+    """Tier 2: full_truncated for an unrecorded seq is False (slot-in-unconditionally,
+    mirrors get/get_full's "" default for unknown seqs)."""
+    store = AnchorStore(tmp_path / "anchors.json")
+    store.capture(10, "hi", full="hi there")
+    assert store.full_truncated(99) is False
 
 
 # ── cut_generation threads full_message ───────────────────────────────────────

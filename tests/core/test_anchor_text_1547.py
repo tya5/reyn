@@ -28,6 +28,17 @@ def test_truncate_anchor_collapses_and_truncates():
     assert len(out) < len(long)         # actually shortened (behavioral, not a size pin)
 
 
+def test_truncate_anchor_one_line_false_preserves_line_breaks(tmp_path):
+    """Tier 2: #6265 — ``one_line=False`` is the SAME mechanism (no separate cut
+    function), just without the whitespace-collapse the 1f preview wants; the 2c
+    edit-prefill consumer needs the original's line breaks intact when the text
+    fits under the limit."""
+    multi_line = "line one\nline two"
+    assert truncate_anchor(multi_line, limit=80, one_line=False) == multi_line
+    # still collapses by default (one_line=True) — the 1f preview's contract is untouched
+    assert truncate_anchor(multi_line, limit=80) == "line one line two"
+
+
 # ── AnchorStore ──────────────────────────────────────────────────────────────
 
 
